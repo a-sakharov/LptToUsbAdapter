@@ -153,11 +153,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\..\..\AnyProjects\cnc-lab-omega-usb\OmegaLptPatch\OmegaLptPatchInjector\ld32.c" />
+    <ClCompile Include="ld32.c" />
     <ClCompile Include="OmegaLptPatchInjector.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\..\..\AnyProjects\cnc-lab-omega-usb\OmegaLptPatch\OmegaLptPatchInjector\ld32.h" />
+    <ClInclude Include="ld32.h" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="injectables.asm">
