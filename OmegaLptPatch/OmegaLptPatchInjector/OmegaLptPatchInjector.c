@@ -7,6 +7,10 @@
 #include <detours.h>
 #include <AVRLPT.h>
 #include <shlwapi.h>
+#include <psapi.h>
+#include <stdarg.h>
+#include "ld32.h"
+
 
 #define FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction) \
 {\
@@ -49,14 +53,180 @@ void LogLine(char* line)
 
     fclose(logFile);
 }
+
+void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t len)
+{
+    uint8_t *instruction_buffer;
+    size_t i;
+
+    instruction_buffer = malloc(len);
+    if (!instruction_buffer)
+    {
+        return;
+    }
+
+    SIZE_T readed;
+    if (!ReadProcessMemory(process, address, instruction_buffer, len, &readed) || readed != len)
+    {
+        free(instruction_buffer);
+        return;
+    }
+
+    char* instruction_buffer_hexline;// [sizeof(instruction_buffer) * 3 + 1 + 64] ;
+    size_t instruction_buffer_hexline_len = len * 3 + 1 + strlen(prefix);
+
+    instruction_buffer_hexline = malloc(instruction_buffer_hexline_len);
+    if (!instruction_buffer_hexline_len)
+    {
+        free(instruction_buffer);
+        return;
+    }
+
+    snprintf(instruction_buffer_hexline, instruction_buffer_hexline_len, "%s (at %p): ", prefix, address);
+
+    for (i = 0; i < len; ++i)
+    {
+        snprintf(instruction_buffer_hexline + strlen(instruction_buffer_hexline), instruction_buffer_hexline_len - strlen(instruction_buffer_hexline), "%.2hhX ", instruction_buffer[i]);
+    }
+
+    free(instruction_buffer);
+
+    LogLine(instruction_buffer_hexline);
+
+    free(instruction_buffer_hexline);
+}
 #endif
 
 AVRLPT AvrLpt;
 
+
+#if defined(MEMORY_PATCH_MODE)
+#pragma pack(push, 1)
+typedef union JmpFar_t
+{
+    uint8_t bytes[6];
+    
+    struct
+    {
+        uint8_t push;
+        void* addr;
+        uint8_t ret;
+    };
+    
+} JmpFar;
+#pragma pack(pop)
+
+extern void* out_byte_fn;
+extern uint32_t out_byte_fn_size;
+extern void* in_byte_fn;
+extern uint32_t in_byte_fn_size;
+
+void* WritePort8;
+void* ReadPort8;
+
+bool FindExternalProcessDllFnAddresses(char* dll_name, HANDLE process, size_t functions, ...)
+{
+    va_list v;
+    size_t module_i;
+    size_t function_i;
+
+    void** relative_addresses;
+
+    relative_addresses = malloc(sizeof(void*) * functions);
+    if (!relative_addresses)
+    {
+        return false;
+    }
+
+    //load relative addresses
+    HMODULE mod = LoadLibraryExA(dll_name, NULL, DONT_RESOLVE_DLL_REFERENCES);
+    if (mod == NULL)
+    {
+        return false;
+    }
+
+    va_start(v, functions);
+    for (function_i = 0; function_i < functions; ++function_i)
+    {
+        relative_addresses[function_i] = GetProcAddress(mod, va_arg(v, char*));
+        va_arg(v, void**);
+        if (!relative_addresses[function_i])
+        {
+            free(relative_addresses);
+            FreeLibrary(mod);
+            va_end(v);
+            return false;
+        }
+        relative_addresses[function_i] = (void*)((uint8_t*)relative_addresses[function_i] - (size_t)mod);
+    }
+
+    FreeLibrary(mod);
+    va_end(v);
+
+    //get absolute addresses in external process
+
+    DWORD bytes_needed;
+    if (!EnumProcessModules(process, NULL, 0, &bytes_needed))
+    {
+        free(relative_addresses);
+        return false;
+    }
+
+    size_t bytes_allocated = bytes_needed;
+    HMODULE* modules_array = malloc(bytes_allocated);
+    if (!modules_array)
+    {
+        free(relative_addresses);
+        return false;
+    }
+
+    if (!EnumProcessModules(process, modules_array, bytes_allocated, &bytes_needed))
+    {
+        free(relative_addresses);
+        free(modules_array);
+        return false;
+    }
+
+    bool found_module = false;
+    va_start(v, functions);
+    for (module_i = 0; module_i < bytes_allocated / sizeof(HMODULE); module_i++)
+    {
+        char module_path[MAX_PATH + 1];
+        if (!GetModuleFileNameExA(process, modules_array[module_i], module_path, sizeof(module_path)))
+        {
+            break;
+        }
+
+        char module_path_again[sizeof(module_path)];
+        char* filename;
+        GetFullPathNameA(module_path, sizeof(module_path_again), module_path_again, &filename);
+
+        if (!strcmp(filename, dll_name))
+        {
+            found_module = true;
+
+            for (function_i = 0; function_i < functions; ++function_i)
+            {
+                va_arg(v, char*);
+                *(va_arg(v, void**)) = (uint8_t*)modules_array[module_i] + (size_t)relative_addresses[function_i];
+            }
+
+            break;
+        }
+    }
+
+    va_end(v);
+    free(modules_array);
+    free(relative_addresses);
+
+    return found_module;
+}
+#endif
+
 bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address)
 {
     //instrucion details
-    uint8_t instr_ptr[3]; //bytes readed from exception ptr
+    uint8_t instr_ptr[16]; //bytes readed from exception ptr
     uint8_t instruction_sz; //instruction length, bytes
     uint16_t port; //port number
     uint8_t io_size; //io data size, bits
@@ -108,7 +278,95 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
         return false;
     }
 
-    for (i = 0; i < sizeof(bypassPorts)/sizeof(*bypassPorts); ++i)
+#if defined(MEMORY_PATCH_MODE)
+    //create mempatch
+
+#ifdef _DEBUG
+    PrintInstructionDumpAt(process, "pre-patched IO call area", exception_address, 32);
+#endif
+
+    if (io_size != 8 || instruction_sz != 1) //only 8 bit io, only port address in DX, only LPT1
+    {
+        return false;
+    }
+
+    JmpFar jmp_far;
+
+    int len_this;
+    SIZE_T len_total = 0;
+    size_t x = sizeof(JmpFar);
+    LPVOID remoteInoutWorker;
+    while (len_total < sizeof(jmp_far))
+    {
+        len_this = length_disasm(instr_ptr + len_total, sizeof(instr_ptr) - len_total);
+        if (len_this < 1)
+        {
+            return false;//eh
+        }
+        len_total += len_this;
+    }
+
+    PVOID worker_fn = out_direction ? &out_byte_fn : &in_byte_fn;
+    uint32_t worker_size = out_direction ? out_byte_fn_size : in_byte_fn_size;
+    void* remote_io_fn = out_direction ? WritePort8 : ReadPort8;
+
+    remoteInoutWorker = VirtualAllocEx(process, NULL, (len_total - instruction_sz) + sizeof(JmpFar) + worker_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (!remoteInoutWorker)
+    {
+        return false;
+    }
+
+    SIZE_T written;
+
+    //copy worker function
+    if (!WriteProcessMemory(process, remoteInoutWorker, worker_fn, worker_size, &written) || written != worker_size)
+    {
+        return false;
+    }
+
+    //copy calling ptr to worker fn
+    if (!WriteProcessMemory(process, remoteInoutWorker, &remote_io_fn, sizeof(remote_io_fn), &written) || written != sizeof(remote_io_fn))
+    {
+        return false;
+    }
+
+    //copy old instructions, but not IO call
+    if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + worker_size), instr_ptr + instruction_sz, len_total - instruction_sz, &written) || written != len_total - instruction_sz)
+    {
+        return false;
+    }
+
+    //patch old IO call
+    if (len_total > sizeof(instr_ptr))
+    {
+        return false;
+    }
+    memset(instr_ptr, 0x90, len_total);
+    JmpFar* jumpToWorker = (JmpFar*)instr_ptr;
+    jumpToWorker->push = 0x68;
+    jumpToWorker->ret = 0xc3;
+    jumpToWorker->addr = (uint8_t*)remoteInoutWorker + 4;//first 4 bytes - real worker address
+
+    if (!WriteProcessMemory(process, exception_address, instr_ptr, len_total, &written) || written != len_total)
+    {
+        return false;
+    }
+
+    //and finally, write jump to old address
+    jumpToWorker->addr = (uint8_t*)exception_address + len_total;
+    if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + (len_total - instruction_sz) + worker_size), jumpToWorker, sizeof(JmpFar), &written) || written != sizeof(JmpFar))
+    {
+        return false;
+    }
+
+#ifdef _DEBUG
+    PrintInstructionDumpAt(process, "patched IO call area", exception_address, 32);
+    PrintInstructionDumpAt(process, "worker area", remoteInoutWorker, 32);
+#endif
+
+#else
+
+    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
     {
         if (port == bypassPorts[i])
         {
@@ -190,6 +448,9 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
     LogLine(buffer);
 #endif
 
+#endif
+
+
     return true;
 }
 
@@ -223,7 +484,7 @@ bool GetPatchDllPath(char* path, size_t max_len)
     
     return PathFileExistsA(path) == TRUE;
 }
-
+#if 0
 bool InjectLibrary(HANDLE process, char* lib_path)
 {
     size_t lib_path_size = strlen(lib_path) + 1;
@@ -252,7 +513,7 @@ bool InjectLibrary(HANDLE process, char* lib_path)
 
     return true;
 }
-
+#endif
 noreturn void Die(wchar_t* reason, bool isSystemFail)
 {
     DWORD error;
@@ -280,16 +541,22 @@ noreturn void Die(wchar_t* reason, bool isSystemFail)
     exit(-1);
 }
 
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     DebugSetProcessKillOnExit(TRUE);
-
     STARTUPINFO si = { .cb = sizeof(STARTUPINFO) };
     PROCESS_INFORMATION pi;
     wchar_t appPath[MAX_PATH];
     char patchDllPath[MAX_PATH];
-    AVRLPT_version av;
 
+    if (sizeof(void*) != 4)
+    {
+        Die(L"Only x86 support! No 64-bit mode!", false);
+    }
+
+#if !defined(MEMORY_PATCH_MODE)
+    AVRLPT_version av;
     AvrLpt = AvrLpt_Open();
     if (!AvrLpt)
     {
@@ -313,6 +580,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     {
         Die(L"Can't configure AVRLPT", false);
     }
+#else
+    MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
+#endif
 
     if (!GetOmegaExePath(appPath, sizeof(appPath) / sizeof(*appPath)))
     {
@@ -334,7 +604,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Die(L"error injecting patch dll", true);
     }
 #else
-    LPCSTR dlls[2] = { patchDllPath };
     if (!DetourCreateProcessWithDllExW(appPath, NULL, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi, patchDllPath, NULL))
     {
         Die(L"error creating omega process with injected dll patch", true);
@@ -369,6 +638,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 {
                     case EXCEPTION_PRIV_INSTRUCTION:
                     {
+#if defined(MEMORY_PATCH_MODE)
+                        if (!WritePort8 || !ReadPort8)
+                        {
+                            //load addresses of WriteReg8/ReadReg8 inside dst process. only now, when process really loaded.
+                            if (!FindExternalProcessDllFnAddresses(patchDllPath, pi.hProcess, 2, "ReadPort8", &ReadPort8, "WritePort8", &WritePort8))
+                            {
+                                Die(L"error loading addresses of patch dll io functions", false);
+                            }
+                        }
+#endif
                         HANDLE thread = OpenThread(THREAD_ALL_ACCESS, FALSE, de.dwThreadId);
                         if (!process_io_exception(pi.hProcess, thread, de.u.Exception.ExceptionRecord.ExceptionAddress))
                         {
@@ -403,7 +682,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     CloseHandle(pi.hProcess);
+
+
+#if !defined(MEMORY_PATCH_MODE)
     AvrLpt_Close(AvrLpt);
-    
+#endif
+
     return 0;
 }

@@ -18,5 +18,18 @@
     <ClCompile Include="OmegaLptPatchInjector.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\..\..\AnyProjects\cnc-lab-omega-usb\OmegaLptPatch\OmegaLptPatchInjector\ld32.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\..\..\AnyProjects\cnc-lab-omega-usb\OmegaLptPatch\OmegaLptPatchInjector\ld32.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="injectables.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
   </ItemGroup>
 </Project>

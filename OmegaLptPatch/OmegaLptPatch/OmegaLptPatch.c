@@ -2,6 +2,8 @@
 #include <detours.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdnoreturn.h>
+#include "AVRLPT.h"
 
 typedef HANDLE(WINAPI* CreateFileA_t)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
 static CreateFileA_t TrueCreateFileA;
@@ -127,7 +129,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     {
         return TRUE;
     }
-    
+
     // Perform actions based on the reason for calling.
     switch (fdwReason)
     {
@@ -184,4 +186,122 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 _declspec(dllexport) void dummy()
 {
 
+}
+
+noreturn void Die(wchar_t* reason, bool isSystemFail)
+{
+    DWORD error;
+
+    if (isSystemFail)
+    {
+        error = GetLastError();
+
+        wchar_t* errorDescription = NULL;
+        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&errorDescription, 0, 0) != 0)
+        {
+            MessageBox(NULL, errorDescription, reason, MB_OK | MB_ICONERROR);
+            HeapFree(GetProcessHeap(), 0, errorDescription);
+        }
+        else
+        {
+            MessageBox(NULL, reason, L"Can not get error details", MB_OK | MB_ICONERROR);
+        }
+    }
+    else
+    {
+        MessageBox(NULL, reason, L"Internal error", MB_OK | MB_ICONERROR);
+    }
+
+    //exit(-1);
+    ExitProcess(-1);
+}
+
+
+AVRLPT AvrLpt;
+uint16_t bypassPorts[] = {
+        0x77A
+};
+
+void OpenAvrLpt()
+{
+    AVRLPT_version av;
+    if (!AvrLpt)
+    {
+        AvrLpt = AvrLpt_Open();
+        if (!AvrLpt)
+        {
+            Die(L"AVRLPT device not found", false);
+        }
+
+        if (!AvrLpt_GetVersion(AvrLpt, &av))
+        {
+            Die(L"Can't get AVRLPT version", false);
+        }
+
+        if (av.revision != 0)
+        {
+            if (MessageBox(NULL, L"Undefined AVRLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
+            {
+                exit(-1);
+            }
+        }
+
+        if (!AvrLpt_SetMode(AvrLpt, LPT_MODE_EPP))
+        {
+            Die(L"Can't configure AVRLPT", false);
+        }
+    }
+}
+
+__declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
+{
+    OpenAvrLpt();
+
+    size_t i;
+    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+    {
+        if (port == bypassPorts[i])
+        {
+            return;
+        }
+    }
+
+    port -= 0x378;
+    if (port > 4)
+    {
+        Die(L"Invalid port passed", false);
+    }
+
+    if (!AvrLpt_SetPort8(AvrLpt, port, data))
+    {
+        Die(L"Error performing AvrLpt_SetPort8", false);
+    }
+}
+
+ __declspec(dllexport) uint8_t _cdecl ReadPort8(uint16_t port)
+{
+    OpenAvrLpt();
+
+    size_t i;
+    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+    {
+        if (port == bypassPorts[i])
+        {
+            return 0;
+        }
+    }
+
+    port -= 0x378;
+    if (port > 4)
+    {
+        Die(L"Invalid port passed", false);
+    }
+
+    uint8_t result;
+    if (!AvrLpt_GetPort8(AvrLpt, port, &result))
+    {
+        Die(L"Error performing AvrLpt_GetPort8", false);
+    }
+
+    return result;
 }
