@@ -45,11 +45,19 @@ typedef struct AVRLPT_version_t
 
 typedef struct AVRLPT_t* AVRLPT;
 
-AVRLPT AvrLpt_Open();
-bool AvrLpt_Close(AVRLPT dev);
-bool AvrLpt_SetMode(AVRLPT dev, AVRLPT_MODE mode);
-bool AvrLpt_GetVersion(AVRLPT dev, AVRLPT_version *ver);
-bool AvrLpt_SetPort8(AVRLPT dev, AVRLPT_REG reg, uint8_t byte);
-bool AvrLpt_GetPort8(AVRLPT dev, AVRLPT_REG reg, uint8_t* byte);
+#if defined __cplusplus
+extern "C" {
+#endif
+
+    AVRLPT AvrLpt_Open();
+    bool AvrLpt_Close(AVRLPT dev);
+    bool AvrLpt_SetMode(AVRLPT dev, AVRLPT_MODE mode);
+    bool AvrLpt_GetVersion(AVRLPT dev, AVRLPT_version* ver);
+    bool AvrLpt_SetPort8(AVRLPT dev, AVRLPT_REG reg, uint8_t byte);
+    bool AvrLpt_GetPort8(AVRLPT dev, AVRLPT_REG reg, uint8_t* byte);
+
+#if defined __cplusplus
+}
+#endif
 
 #endif

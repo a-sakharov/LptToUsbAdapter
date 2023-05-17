@@ -98,7 +98,7 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 #endif
 
 AVRLPT AvrLpt;
-
+//#define MEMORY_PATCH_MODE
 
 #if defined(MEMORY_PATCH_MODE)
 #pragma pack(push, 1)
