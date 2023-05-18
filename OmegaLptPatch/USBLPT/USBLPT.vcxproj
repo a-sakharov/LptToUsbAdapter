@@ -22,7 +22,7 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{1dada954-9848-498e-af0e-f1a3e5986b35}</ProjectGuid>
-    <RootNamespace>AVRLPT</RootNamespace>
+    <RootNamespace>USBLPT</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <ProjectName>USBLPT</ProjectName>
   </PropertyGroup>
