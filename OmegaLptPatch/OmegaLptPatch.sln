@@ -13,8 +13,11 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OmegaLptPatchDemo", "OmegaLptPatchDemo\OmegaLptPatchDemo.vcxproj", "{695144C6-F671-4244-A13A-FBC0E4122EF8}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OmegaLptPatch", "OmegaLptPatch\OmegaLptPatch.vcxproj", "{B0AD4638-C445-41F6-9AF9-A7A131B6F383}"
+	ProjectSection(ProjectDependencies) = postProject
+		{1DADA954-9848-498E-AF0E-F1A3E5986B35} = {1DADA954-9848-498E-AF0E-F1A3E5986B35}
+	EndProjectSection
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AVRLPT", "AVRLPT\AVRLPT.vcxproj", "{1DADA954-9848-498E-AF0E-F1A3E5986B35}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "USBLPT", "AVRLPT\AVRLPT.vcxproj", "{1DADA954-9848-498E-AF0E-F1A3E5986B35}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

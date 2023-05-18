@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdnoreturn.h>
-#include "AVRLPT.h"
+#include "USBLPT.h"
 
 typedef HANDLE(WINAPI* CreateFileA_t)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
 static CreateFileA_t TrueCreateFileA;
@@ -217,45 +217,45 @@ noreturn void Die(wchar_t* reason, bool isSystemFail)
 }
 
 
-AVRLPT AvrLpt;
+USBLPT UsbLpt;
 uint16_t bypassPorts[] = {
         0x77A
 };
 
-void OpenAvrLpt()
+void OpenUsbLpt()
 {
-    AVRLPT_version av;
-    if (!AvrLpt)
+    USBLPT_version ulv;
+    if (!UsbLpt)
     {
-        AvrLpt = AvrLpt_Open();
-        if (!AvrLpt)
+        UsbLpt = UsbLpt_Open();
+        if (!UsbLpt)
         {
-            Die(L"AVRLPT device not found", false);
+            Die(L"USBLPT device not found", false);
         }
 
-        if (!AvrLpt_GetVersion(AvrLpt, &av))
+        if (!UsbLpt_GetVersion(UsbLpt, &ulv))
         {
-            Die(L"Can't get AVRLPT version", false);
+            Die(L"Can't get USBLPT version", false);
         }
 
-        if (av.revision != 0)
+        if (ulv.revision != 0)
         {
-            if (MessageBox(NULL, L"Undefined AVRLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
+            if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
             {
                 exit(-1);
             }
         }
 
-        if (!AvrLpt_SetMode(AvrLpt, LPT_MODE_EPP))
+        if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
         {
-            Die(L"Can't configure AVRLPT", false);
+            Die(L"Can't configure USBLPT", false);
         }
     }
 }
 
 __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
 {
-    OpenAvrLpt();
+    OpenUsbLpt();
 
     size_t i;
     for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
@@ -272,15 +272,15 @@ __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
         Die(L"Invalid port passed", false);
     }
 
-    if (!AvrLpt_SetPort8(AvrLpt, port, data))
+    if (!UsbLpt_SetPort8(UsbLpt, port, data))
     {
-        Die(L"Error performing AvrLpt_SetPort8", false);
+        Die(L"Error performing UsbLpt_SetPort8", false);
     }
 }
 
  __declspec(dllexport) uint8_t _cdecl ReadPort8(uint16_t port)
 {
-    OpenAvrLpt();
+    OpenUsbLpt();
 
     size_t i;
     for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
@@ -298,9 +298,9 @@ __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
     }
 
     uint8_t result;
-    if (!AvrLpt_GetPort8(AvrLpt, port, &result))
+    if (!UsbLpt_GetPort8(UsbLpt, port, &result))
     {
-        Die(L"Error performing AvrLpt_GetPort8", false);
+        Die(L"Error performing UsbLpt_GetPort8", false);
     }
 
     return result;

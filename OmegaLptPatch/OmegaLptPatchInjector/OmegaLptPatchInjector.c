@@ -5,7 +5,7 @@
 #include <stdnoreturn.h>
 #include <time.h>
 #include <detours.h>
-#include <AVRLPT.h>
+#include <USBLPT.h>
 #include <shlwapi.h>
 #include <psapi.h>
 #include <stdarg.h>
@@ -97,7 +97,7 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 }
 #endif
 
-AVRLPT AvrLpt;
+USBLPT UsbLpt;
 //#define MEMORY_PATCH_MODE
 
 #if defined(MEMORY_PATCH_MODE)
@@ -397,7 +397,7 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
                 data = eax & 0xFF;
             }
 
-            if (!AvrLpt_SetPort8(AvrLpt, port - 0x378, (uint8_t)data))
+            if (!UsbLpt_SetPort8(UsbLpt, port - 0x378, (uint8_t)data))
             {
                 return false;
             }
@@ -405,7 +405,7 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
         else
         {
             uint8_t temp;
-            if (!AvrLpt_GetPort8(AvrLpt, port - 0x378, &temp))
+            if (!UsbLpt_GetPort8(UsbLpt, port - 0x378, &temp))
             {
                 return false;
             }
@@ -556,29 +556,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
 #if !defined(MEMORY_PATCH_MODE)
-    AVRLPT_version av;
-    AvrLpt = AvrLpt_Open();
-    if (!AvrLpt)
+    USBLPT_version ulv;
+    UsbLpt = UsbLpt_Open();
+    if (!UsbLpt)
     {
-        Die(L"AVRLPT device not found", false);
+        Die(L"USBLPT device not found", false);
     }
 
-    if (!AvrLpt_GetVersion(AvrLpt, &av))
+    if (!UsbLpt_GetVersion(UsbLpt, &ulv))
     {
-        Die(L"Can't get AVRLPT version", false);
+        Die(L"Can't get USBLPT version", false);
     }
 
-    if (av.revision != 0)
+    if (ulv.revision != 0)
     {
-        if (MessageBox(NULL, L"Undefined AVRLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
+        if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
         {
             exit(-1);
         }
     }
 
-    if (!AvrLpt_SetMode(AvrLpt, LPT_MODE_EPP))
+    if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
     {
-        Die(L"Can't configure AVRLPT", false);
+        Die(L"Can't configure USBLPT", false);
     }
 #else
     MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
@@ -685,7 +685,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
 
 #if !defined(MEMORY_PATCH_MODE)
-    AvrLpt_Close(AvrLpt);
+    UsbLpt_Close(UsbLpt);
 #endif
 
     return 0;
