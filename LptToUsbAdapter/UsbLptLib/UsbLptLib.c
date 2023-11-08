@@ -1,4 +1,4 @@
-#include "USBLPT.h"
+#include "UsbLptLib.h"
 #include <Windows.h>
 #include <Winusb.h>
 #include <SetupAPI.h>

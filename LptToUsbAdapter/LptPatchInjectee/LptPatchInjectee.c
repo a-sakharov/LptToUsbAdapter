@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdnoreturn.h>
-#include "USBLPT.h"
+#include "UsbLptLib.h"
 
 typedef HANDLE(WINAPI* CreateFileA_t)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
 static CreateFileA_t TrueCreateFileA;

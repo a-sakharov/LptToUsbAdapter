@@ -1,5 +1,5 @@
-#ifndef USBLPT_H
-#define USBLPT_H
+#ifndef USBLPTLIB_H
+#define USBLPTLIB_H
 
 #include <stdbool.h>
 #include <stdint.h>

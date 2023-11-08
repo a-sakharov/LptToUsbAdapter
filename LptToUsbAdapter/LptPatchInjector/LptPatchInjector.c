@@ -5,7 +5,7 @@
 #include <stdnoreturn.h>
 #include <time.h>
 #include <detours.h>
-#include <USBLPT.h>
+#include <UsbLptLib.h>
 #include <shlwapi.h>
 #include <psapi.h>
 #include <stdarg.h>
