@@ -1,4 +1,4 @@
-# OmegaLptPatch
+# LptToUsbAdapter
 
 Solution for connecting old LPT device to modern PC via USB
 
