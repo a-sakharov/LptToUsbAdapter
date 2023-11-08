@@ -11,7 +11,7 @@
 #include <stdarg.h>
 #include "ld32.h"
 
-
+    
 #define FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction) \
 {\
 instruction_sz = (_instruction_sz);\
@@ -98,7 +98,7 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 #endif
 
 USBLPT UsbLpt;
-//#define MEMORY_PATCH_MODE
+#define MEMORY_PATCH_MODE
 
 #if defined(MEMORY_PATCH_MODE)
 #pragma pack(push, 1)
@@ -455,8 +455,8 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
 }
 
 #define PATCH_DLL_NAME "OmegaLptPatch32.dll"
-#define APPLICATION_NAME L"Orange.exe"
-//#define APPLICATION_NAME L"OmegaLptPatchDemo.exe"
+//#define APPLICATION_NAME L"Orange.exe"
+#define APPLICATION_NAME L"OmegaLptPatchDemo.exe"
 
 bool GetOmegaExePath(wchar_t* path, size_t max_len)
 {
@@ -568,7 +568,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Die(L"Can't get USBLPT version", false);
     }
 
-    if (ulv.revision != 0)
+    if (ulv.revision != 0 && ulv.revision != 1 && ulv.revision != 2)
     {
         if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
         {

@@ -225,31 +225,33 @@ uint16_t bypassPorts[] = {
 void OpenUsbLpt()
 {
     USBLPT_version ulv;
+    if (UsbLpt)
+    {
+        return;
+    }
+
+    UsbLpt = UsbLpt_Open();
     if (!UsbLpt)
     {
-        UsbLpt = UsbLpt_Open();
-        if (!UsbLpt)
-        {
-            Die(L"USBLPT device not found", false);
-        }
+        Die(L"USBLPT device not found", false);
+    }
 
-        if (!UsbLpt_GetVersion(UsbLpt, &ulv))
-        {
-            Die(L"Can't get USBLPT version", false);
-        }
+    if (!UsbLpt_GetVersion(UsbLpt, &ulv))
+    {
+        Die(L"Can't get USBLPT version", false);
+    }
 
-        if (ulv.revision != 0)
+    if (ulv.revision != 0 && ulv.revision != 1 && ulv.revision != 2)
+    {
+        if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
         {
-            if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
-            {
-                exit(-1);
-            }
+            exit(-1);
         }
+    }
 
-        if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
-        {
-            Die(L"Can't configure USBLPT", false);
-        }
+    if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
+    {
+        Die(L"Can't configure USBLPT", false);
     }
 }
 

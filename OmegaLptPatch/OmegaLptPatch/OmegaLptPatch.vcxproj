@@ -24,6 +24,7 @@
     <ProjectGuid>{b0ad4638-c445-41f6-9af9-a7a131b6f383}</ProjectGuid>
     <RootNamespace>OmegaLptPatch</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>LptPatchInjectee</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">

@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="OmegaLptPatchDemo.c">
+    <ClCompile Include="LptPortAccessDemo.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
