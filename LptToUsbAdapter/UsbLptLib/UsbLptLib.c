@@ -1,12 +1,9 @@
 #include "UsbLptLib.h"
 #include <Windows.h>
-#include <Winusb.h>
-#include <SetupAPI.h>
-#include <initguid.h>
-#include <Usbiodef.h>
 #include <strsafe.h>
 #include <tchar.h>
-#include <Devpkey.h>
+#include <crtdbg.h>
+#include "UsbWrappers.h"
 
 
 #define USBLPT_VID 0x1209
@@ -14,9 +11,8 @@
 
 struct USBLPT_t
 {
-    HANDLE devHandle;
-    WINUSB_INTERFACE_HANDLE devWinUsbHandle;
-    USB_INTERFACE_DESCRIPTOR iface0;
+    USBHANDLE usb_handles;
+    USBLPT_version version;
 };
 
 typedef enum USBLPT_COMMAND_t
@@ -27,279 +23,122 @@ typedef enum USBLPT_COMMAND_t
     USBLPT_GET_REG = 0x0a
 } USBLPT_COMMAND;
 
-static bool DevicePathToVidPid(PTSTR path, uint16_t *vid, uint16_t *pid)
+bool UsbLpt_GetList(UsbLptDevice* devices, size_t devices_max, size_t* devices_used)
 {
-    PTSTR vid_p;
-    PTSTR pid_p;
+    UsbDeviceInfo* devlist;
+    size_t devlistSize;
+    size_t i;
 
-    vid_p = _tcsstr(path, TEXT("vid_"));
-    pid_p = _tcsstr(path, TEXT("pid_"));
+    *devices_used = 0;
 
-    if (!vid_p || _tcslen(vid_p) < 8) //no vid
+    if (USBWRAP_CreateUsbDevicesInfoList(&devlist, &devlistSize))
     {
-        return false;
-    }
-
-    if (!pid_p || _tcslen(pid_p) < 8) //no vid
-    {
-        return false;
-    }
-
-    vid_p += 4;
-    pid_p += 4;
-
-    _stscanf_s(vid_p, TEXT("%4hx"), vid);
-    _stscanf_s(pid_p, TEXT("%4hx"), pid);
-
-    return true;
-}
-
-static PSP_DEVICE_INTERFACE_DETAIL_DATA SetupDiGetDeviceInterfaceDetailAlloc(HDEVINFO DeviceInfoSet, PSP_DEVICE_INTERFACE_DATA DeviceInterfaceData, PSP_DEVINFO_DATA DeviceInfoData)
-{
-    ULONG requiredLength = 0;
-    PSP_DEVICE_INTERFACE_DETAIL_DATA device_detail;
-
-    //get size
-    if (!SetupDiGetDeviceInterfaceDetail(DeviceInfoSet, DeviceInterfaceData, NULL, 0, &requiredLength, NULL)
-        && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-    {
-        return NULL;
-    }
-
-    //alloc
-    device_detail = malloc(requiredLength);
-    if (!device_detail)
-    {
-        return NULL;
-    }
-
-    device_detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
-
-    //get
-    if (!SetupDiGetDeviceInterfaceDetail(DeviceInfoSet, DeviceInterfaceData, device_detail, requiredLength, &requiredLength, DeviceInfoData))
-    {
-        free(device_detail);
-        return NULL;
-    }
-
-    return device_detail;
-}
-
-static bool FindOpenDevice(uint16_t dev_vid, uint16_t dev_pid, wchar_t *devManufacturer, wchar_t *devProductName, HANDLE *devHandle, WINUSB_INTERFACE_HANDLE *devWinUsbHandle)
-{
-    HDEVINFO deviceInfo;
-    SP_DEVICE_INTERFACE_DATA interfaceData = { .cbSize = sizeof(SP_DEVICE_INTERFACE_DATA) };
-    bool dev_found = false;
-    PSP_DEVICE_INTERFACE_DETAIL_DATA device_detail = NULL;
-    HANDLE device = 0;
-    WINUSB_INTERFACE_HANDLE wih = 0;
-
-    deviceInfo = SetupDiGetClassDevs(&GUID_DEVINTERFACE_USB_DEVICE, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-    if (deviceInfo == INVALID_HANDLE_VALUE) 
-    {
-        return false;
-    }
-
-    DWORD dev_index = 0;
-    while (SetupDiEnumDeviceInterfaces(deviceInfo, NULL, &GUID_DEVINTERFACE_USB_DEVICE, dev_index++, &interfaceData))
-    {
-        if (device_detail)
+        for (i = 0; i < devlistSize; ++i)
         {
-            free(device_detail);
-            device_detail = NULL;
-        }
-
-        if (device)
-        {
-            CloseHandle(device);
-            device = 0;
-        }
-
-        if (wih)
-        {
-            WinUsb_Free(wih);
-            wih = 0;
-        }
-
-        device_detail = SetupDiGetDeviceInterfaceDetailAlloc(deviceInfo, &interfaceData, NULL);
-        if (!device_detail)
-        {
-            continue;
-        }
-
-        uint16_t vid;
-        uint16_t pid;
-
-        if (!DevicePathToVidPid(device_detail->DevicePath, &vid, &pid) || vid != dev_vid || pid != dev_pid)
-        {
-            continue;
-        }
-
-        device = CreateFile(device_detail->DevicePath, GENERIC_WRITE | GENERIC_READ, FILE_SHARE_WRITE | FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
-        if (device == INVALID_HANDLE_VALUE)
-        {
-            device = 0;
-            continue;
-        }
-
-        if(!WinUsb_Initialize(device, &wih))
-        {
-            continue;
-        }
-
-        LONG transferred;
-        if (devManufacturer)
-        {
-            wchar_t device_manufacturer[1024];
-            if (!WinUsb_GetDescriptor(wih, USB_STRING_DESCRIPTOR_TYPE, 0x01, 0, (PUCHAR)device_manufacturer, sizeof(device_manufacturer), &transferred))
+            if (devlist[i].vid != USBLPT_VID || devlist[i].pid != USBLPT_PID)
             {
                 continue;
             }
 
-            if ((transferred >= sizeof(device_manufacturer)) || (transferred < 0))
+            if (devlist[i].manufacturer == NULL || devlist[i].productName == NULL)
             {
                 continue;
             }
-            device_manufacturer[transferred / 2] = L'\0';
-            memmove(device_manufacturer, device_manufacturer + 1, transferred);
 
-            if (wcscmp(device_manufacturer, devManufacturer))
+            if(wcscmp(devlist[i].productName->string, L"Virtual EPP") || wcscmp(devlist[i].manufacturer->string, L"a.sakharov"))
             {
                 continue;
             }
+
+            struct USBLPT_t temp;
+            if (!USBWRAP_OpenDeviceByPath(devlist[i].devicePath, &temp.usb_handles))
+            {
+                continue;
+            }
+
+            if (!UsbLpt_GetVersion(&temp, &devices[*devices_used].version))
+            {
+                USBWRAP_CloseDevice(temp.usb_handles);
+                continue;
+            }
+
+            USBWRAP_CloseDevice(temp.usb_handles);
+            
+            wcscpy_s(devices[*devices_used].location, sizeof(devices[*devices_used].location)/sizeof(*devices[*devices_used].location), devlist[i].devicePath);
+            if (devlist[i].serial)
+            {
+                wcscpy_s(devices[*devices_used].serial, sizeof(devices[*devices_used].serial) / sizeof(*devices[*devices_used].serial), devlist[i].serial->string);
+            }
+            else
+            {
+                devices[*devices_used].serial[0] = L'\0';
+            }
+
+            (*devices_used)++;
         }
 
-        if (devProductName)
-        {
-            wchar_t device_product_name[1024];
-            if (!WinUsb_GetDescriptor(wih, USB_STRING_DESCRIPTOR_TYPE, 0x02, 0, (PUCHAR)device_product_name, sizeof(device_product_name), &transferred) || (transferred / 2 >= sizeof(device_product_name)) || (transferred < 0))
-            {
-                continue;
-            }
-
-            if ((transferred >= sizeof(device_product_name)) || (transferred < 0))
-            {
-                continue;
-            }
-            device_product_name[transferred / 2] = L'\0';
-            memmove(device_product_name, device_product_name + 1, transferred - 1);
-
-            if (wcscmp(device_product_name, devProductName))
-            {
-                continue;
-            }
-        }
-
-        dev_found = true;
-        break;
-
-    }
-
-    if (device_detail)
-    {
-        free(device_detail);
-    }
-
-    if (dev_found)
-    {
-        *devHandle = device;
-        *devWinUsbHandle = wih;
-    }
-    else
-    {
-        if (device)
-        {
-            CloseHandle(device);
-        }
-
-        if (wih)
-        {
-            WinUsb_Free(wih);
-        }
-    }
-
-    SetupDiDestroyDeviceInfoList(deviceInfo);
-
-    return dev_found;
-}
-
-#define VENDOR_REQUEST 0x40
-static bool Write(USBLPT dev, USBLPT_COMMAND request, uint16_t value, uint16_t index, uint8_t *data, uint16_t size)
-{
-    LONG transferred;
-    WINUSB_SETUP_PACKET packet =
-    {
-        .RequestType = VENDOR_REQUEST | 0x00,
-        .Request = request,
-        .Value = value,
-        .Index = index,
-        .Length = size,
-    };
-
-    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, size, &transferred, NULL))
-    {
-        return false;
-    }
-
-    if (transferred != size)
-    {
-        return false;
+        USBWRAP_DestroyUsbDevicesInfoList(devlist, devlistSize);
     }
 
     return true;
 }
 
-static bool Read(USBLPT dev, USBLPT_COMMAND request, uint16_t value, uint16_t index, uint8_t* data, uint16_t *size)
+USBLPT UsbLpt_OpenAuto()
 {
-    LONG transferred;
-    WINUSB_SETUP_PACKET packet =
+    USBLPT UsbLpt;
+    UsbLptDevice usblptdevs[16];
+    size_t usblptdevs_count;
+    if (!UsbLpt_GetList(usblptdevs, sizeof(usblptdevs) / sizeof(*usblptdevs), &usblptdevs_count))
     {
-        .RequestType = VENDOR_REQUEST | 0x80,
-        .Request = request,
-        .Value = value,
-        .Index = index,
-        .Length = *size,
-    };
-
-    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, *size, &transferred, NULL))
-    {
-        return false;
+        return NULL;
     }
 
-    if (transferred != *size)
+    if (usblptdevs_count < 1)
     {
-        return false;//maybe not?
+        return NULL;
     }
 
-    return true;
+    size_t selected_device = 0;
+
+    if (usblptdevs_count > 1)
+    {
+        selected_device = UsbLpt_BuildSimpleGuiDeviceSelection(usblptdevs, usblptdevs_count);
+
+        if (selected_device == MAXSIZE_T)
+        {
+            return NULL;
+        }
+    }
+
+    UsbLpt = UsbLpt_Open(&usblptdevs[selected_device]);
+    if (!UsbLpt)
+    {
+        return NULL;
+    }
+
+    return UsbLpt;
 }
 
-USBLPT UsbLpt_Open()
+USBLPT UsbLpt_Open(UsbLptDevice *dev)
 {
-    USBLPT result = NULL;
-
-    HANDLE devHandle;
-    WINUSB_INTERFACE_HANDLE devWinUsbHandle;
-
-    if (FindOpenDevice(USBLPT_VID, USBLPT_PID, L"a.sakharov", L"Virtual EPP", &devHandle, &devWinUsbHandle))
+    USBLPT result;
+    
+    result = malloc(sizeof(struct USBLPT_t));
+    if (!result)
     {
-        result = malloc(sizeof(struct USBLPT_t));
-        if(!result)
-        {
-            WinUsb_Free(devWinUsbHandle);
-            CloseHandle(devHandle);
-            return false;
-        }
+        return NULL;
+    }
 
-        result->devHandle = devHandle;
-        result->devWinUsbHandle = devWinUsbHandle;
-#if 0
-        if (!WinUsb_QueryInterfaceSettings(result->devWinUsbHandle, 0, &result->iface0))
-        {
-            UsbLpt_Close(result);
-            return false;
-        }
-#endif
+    if (!USBWRAP_OpenDeviceByPath(dev->location, &result->usb_handles))
+    {
+        free(result);
+        return NULL;
+    }
+
+    if (!UsbLpt_GetVersion(result, &result->version))
+    {
+        UsbLpt_Close(result);
+        return NULL;
     }
 
     return result;
@@ -307,9 +146,8 @@ USBLPT UsbLpt_Open()
 
 bool UsbLpt_Close(USBLPT dev)
 {
-    WinUsb_Free(dev->devWinUsbHandle);
-    CloseHandle(dev->devHandle);
-
+    USBWRAP_CloseDevice(dev->usb_handles);
+    
     free(dev);
 
     return true;
@@ -317,7 +155,7 @@ bool UsbLpt_Close(USBLPT dev)
 
 bool UsbLpt_SetMode(USBLPT dev, USBLPT_MODE mode)
 {
-    if (!Write(dev, USBLPT_SET_MODE, (uint16_t)mode, 0, NULL, 0))
+    if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_MODE, (uint16_t)mode, 0, NULL, 0))
     {
         return false;
     }
@@ -329,7 +167,7 @@ bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver)
 {
     uint16_t size = sizeof(USBLPT_version);
 
-    if (!Read(dev, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size))
+    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size))
     {
         return false;
     }
@@ -339,7 +177,7 @@ bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver)
 
 bool UsbLpt_SetPort8(USBLPT dev, USBLPT_REG reg, uint8_t byte)
 {
-    if (!Write(dev, USBLPT_SET_REG, (uint16_t)reg, byte, NULL, 0))
+    if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_REG, (uint16_t)reg, byte, NULL, 0))
     {
         return false;
     }
@@ -351,10 +189,144 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
 {
     uint16_t iosz = 1;
 
-    if (!Read(dev, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &iosz))
+    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &iosz))
     {
         return false;
     }
 
     return true;
+}
+
+///////////////////////////
+
+
+static HWND ListBox;
+static HWND MainWindow;
+static HWND SubmitButton;
+static LRESULT ListBoxSelection;
+#define SUBMIT_BTN 77
+static LRESULT CALLBACK ChoiceWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    RECT rcOwner;
+    RECT rcDlg;
+    RECT rc;
+    HWND hwndOwner;
+
+    switch (uMsg)
+    {
+        case WM_CREATE:
+        ListBoxSelection = LB_ERR;
+
+        if ((hwndOwner = GetParent(hwnd)) == NULL)
+        {
+            hwndOwner = GetDesktopWindow();
+        }
+
+        GetWindowRect(hwndOwner, &rcOwner);
+        GetWindowRect(hwnd, &rcDlg);
+        CopyRect(&rc, &rcOwner);
+
+        OffsetRect(&rcDlg, -rcDlg.left, -rcDlg.top);
+        OffsetRect(&rc, -rc.left, -rc.top);
+        OffsetRect(&rc, -rcDlg.right, -rcDlg.bottom);
+
+        SetWindowPos(hwnd, HWND_TOP, rcOwner.left + (rc.right / 2), rcOwner.top + (rc.bottom / 2), 0, 0, SWP_NOSIZE);
+        break;
+
+        case WM_COMMAND:
+        {
+            switch (LOWORD(wParam))
+            {
+                case SUBMIT_BTN:
+                ListBoxSelection = SendMessage(ListBox, CB_GETCURSEL, 0, 0);
+                DestroyWindow(SubmitButton);
+                DestroyWindow(ListBox);
+                DestroyWindow(MainWindow);
+                break;
+
+                default:
+                break;
+            }
+        }
+        break;
+
+        case WM_DESTROY:
+        PostQuitMessage((int)ListBoxSelection);
+        return 0;
+
+        default:
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+    return 0;
+}
+
+size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t devices_count)
+{
+    WNDCLASSEX wc = { 0 };
+    MSG msg;
+    size_t i;
+    const wchar_t classname[] = L"ChoiceDialogClass";
+
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = ChoiceWndProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
+    wc.lpszClassName = classname;
+
+    if (!RegisterClassEx(&wc))
+    {
+        if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        {
+            return MAXSIZE_T;
+        }
+    }
+
+    MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
+    if (!MainWindow)
+    {
+        return MAXSIZE_T;
+    }
+
+    ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 280, 190, MainWindow, NULL, GetModuleHandle(NULL), NULL);
+    if (!ListBox)
+    {
+        return MAXSIZE_T;
+    }
+
+    SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 280, 25, MainWindow, (HMENU)SUBMIT_BTN, GetModuleHandle(NULL), NULL);
+    if (!SubmitButton)
+    {
+        return MAXSIZE_T;
+    }
+
+    for (i = 0; i < devices_count; ++i)
+    {
+        wchar_t label[128];
+        swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.revision, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
+        SendMessage(ListBox, CB_ADDSTRING, 0, (LPARAM)label);
+    }
+
+    ShowWindow(SubmitButton, SW_SHOW);
+    ShowWindow(ListBox, SW_SHOW);
+    ShowWindow(MainWindow, SW_SHOW);
+
+    UpdateWindow(MainWindow);
+    UpdateWindow(ListBox);
+    UpdateWindow(SubmitButton);
+
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    if (msg.wParam != LB_ERR)
+    {
+        return msg.wParam;
+    }
+    else
+    {
+        return MAXSIZE_T;
+    }
 }

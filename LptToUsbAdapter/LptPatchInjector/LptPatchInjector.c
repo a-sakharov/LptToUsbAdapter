@@ -98,7 +98,7 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 #endif
 
 USBLPT UsbLpt;
-#define MEMORY_PATCH_MODE
+//#define MEMORY_PATCH_MODE
 
 #if defined(MEMORY_PATCH_MODE)
 #pragma pack(push, 1)
@@ -454,9 +454,9 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
     return true;
 }
 
-#define PATCH_DLL_NAME "OmegaLptPatch32.dll"
+#define PATCH_DLL_NAME "LptPatchInjectee32.dll"
 //#define APPLICATION_NAME L"Orange.exe"
-#define APPLICATION_NAME L"OmegaLptPatchDemo.exe"
+#define APPLICATION_NAME L"LptPortAccessDemo.exe"
 
 bool GetOmegaExePath(wchar_t* path, size_t max_len)
 {
@@ -556,24 +556,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
 #if !defined(MEMORY_PATCH_MODE)
-    USBLPT_version ulv;
-    UsbLpt = UsbLpt_Open();
+    UsbLpt = UsbLpt_OpenAuto();
     if (!UsbLpt)
     {
-        Die(L"USBLPT device not found", false);
-    }
-
-    if (!UsbLpt_GetVersion(UsbLpt, &ulv))
-    {
-        Die(L"Can't get USBLPT version", false);
-    }
-
-    if (ulv.revision != 0 && ulv.revision != 1 && ulv.revision != 2)
-    {
-        if (MessageBox(NULL, L"Undefined USBLPT revesion. Continue?", L"Warning", MB_YESNO | MB_ICONWARNING) == IDNO)
-        {
-            exit(-1);
-        }
+        Die(L"Can't open USBLPT", false);
     }
 
     if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
@@ -586,7 +572,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (!GetOmegaExePath(appPath, sizeof(appPath) / sizeof(*appPath)))
     {
-        Die(L"Omega start file can not be located", false);
+        Die(L"Start file can not be located", false);
     }
 
     if (!GetPatchDllPath(patchDllPath, sizeof(patchDllPath) / sizeof(*patchDllPath)))
@@ -597,7 +583,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 #if 0
     if (!CreateProcess(appPath, NULL, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi))
     {
-        Die(L"error creating omega process", true);
+        Die(L"error creating process", true);
     }
     if (!InjectLibrary(pi.hProcess, patchDllPath))
     {
@@ -606,7 +592,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 #else
     if (!DetourCreateProcessWithDllExW(appPath, NULL, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi, patchDllPath, NULL))
     {
-        Die(L"error creating omega process with injected dll patch", true);
+        Die(L"error creating process with injected dll patch", true);
     }
 #endif
     CloseHandle(pi.hThread);

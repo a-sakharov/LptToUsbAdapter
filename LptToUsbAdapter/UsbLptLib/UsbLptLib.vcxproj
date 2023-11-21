@@ -75,7 +75,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
@@ -135,9 +135,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="UsbLptLib.c" />
+    <ClCompile Include="UsbWrappers.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="UsbLptLib.h" />
+    <ClInclude Include="UsbWrappers.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

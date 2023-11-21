@@ -42,14 +42,27 @@ typedef struct USBLPT_version_t
 } USBLPT_version;
 #pragma pack(pop)
 
+struct UsbLptDevice_t
+{
+    USBLPT_version version;
+    wchar_t serial[128];
+    wchar_t location[128]; //will be enough?
+};
+typedef struct UsbLptDevice_t UsbLptDevice;
 
-typedef struct USBLPT_t* USBLPT;
+
+typedef struct USBLPT_t *USBLPT;
 
 #if defined __cplusplus
 extern "C" {
 #endif
 
-    USBLPT UsbLpt_Open();
+    bool UsbLpt_GetList(UsbLptDevice *devices, size_t devices_max, size_t *devices_used);
+    size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t devices_count);
+
+    USBLPT UsbLpt_Open(UsbLptDevice* dev);
+    USBLPT UsbLpt_OpenAuto();
+    
     bool UsbLpt_Close(USBLPT dev);
     bool UsbLpt_SetMode(USBLPT dev, USBLPT_MODE mode);
     bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver);
