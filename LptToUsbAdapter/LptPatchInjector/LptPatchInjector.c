@@ -33,7 +33,7 @@ void LogLine(char* line)
     OutputDebugStringA("\n");
 
     FILE* logFile;
-    if (fopen_s(&logFile, "OmegaLptPatchInjector.log", "a"))
+    if (fopen_s(&logFile, "LptPatchInjector.log", "a"))
     {
         return;
     }
@@ -458,7 +458,7 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
 //#define APPLICATION_NAME L"Orange.exe"
 #define APPLICATION_NAME L"LptPortAccessDemo.exe"
 
-bool GetOmegaExePath(wchar_t* path, size_t max_len)
+bool GetTargetExePath(wchar_t* path, size_t max_len)
 {
     if (wcscpy_s(path, max_len, APPLICATION_NAME) != 0)
     {
@@ -570,7 +570,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
 #endif
 
-    if (!GetOmegaExePath(appPath, sizeof(appPath) / sizeof(*appPath)))
+    if (!GetTargetExePath(appPath, sizeof(appPath) / sizeof(*appPath)))
     {
         Die(L"Start file can not be located", false);
     }

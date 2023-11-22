@@ -22,7 +22,7 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{695144c6-f671-4244-a13a-fbc0e4122ef8}</ProjectGuid>
-    <RootNamespace>OmegaLptPatchDemo</RootNamespace>
+    <RootNamespace>LptPortAccessDemo</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <ProjectName>LptPortAccessDemo</ProjectName>
   </PropertyGroup>

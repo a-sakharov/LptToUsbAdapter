@@ -22,7 +22,7 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{bcf4ae6b-4dfd-4450-9795-2753410f71d6}</ProjectGuid>
-    <RootNamespace>OmegaLptPatchInjector</RootNamespace>
+    <RootNamespace>LptPatchInjector</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <ProjectName>LptPatchInjector</ProjectName>
   </PropertyGroup>

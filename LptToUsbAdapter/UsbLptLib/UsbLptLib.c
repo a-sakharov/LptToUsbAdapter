@@ -23,6 +23,58 @@ typedef enum USBLPT_COMMAND_t
     USBLPT_GET_REG = 0x0a
 } USBLPT_COMMAND;
 
+#ifdef _DEBUG
+void UsbLpt_DebugPrintUsbInfo(UsbDeviceInfo* dev)
+{
+    wchar_t buf[1024];
+    UsbString* us;
+
+    swprintf(buf, sizeof(buf)/sizeof(*buf), L"%s\n\tVID %.4hX\n\tPID %.4hX\n\tbcdDevice %.4hX\n", 
+        dev->devicePath,
+        dev->vid,
+        dev->pid,
+        dev->bcdDevice);
+    OutputDebugStringW(buf);
+
+    if (dev->manufacturer)
+    {
+        OutputDebugStringW(L"\tManufacturer:\n");
+        us = dev->manufacturer;
+        while (us)
+        {
+            swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
+            OutputDebugStringW(buf);
+            us = us->next;
+        }
+    }
+
+    if (dev->productName)
+    {
+        OutputDebugStringW(L"\tProduct name:\n");
+        us = dev->productName;
+        while (us)
+        {
+            swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
+            OutputDebugStringW(buf);
+            us = us->next;
+        }
+    }
+
+    if (dev->serial)
+    {
+        OutputDebugStringW(L"\tSerial:\n");
+        us = dev->serial;
+        while (us)
+        {
+            swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
+            OutputDebugStringW(buf);
+            us = us->next;
+        }
+    }
+    OutputDebugStringW(L"\n");
+}
+#endif
+
 bool UsbLpt_GetList(UsbLptDevice* devices, size_t devices_max, size_t* devices_used)
 {
     UsbDeviceInfo* devlist;
@@ -33,8 +85,11 @@ bool UsbLpt_GetList(UsbLptDevice* devices, size_t devices_max, size_t* devices_u
 
     if (USBWRAP_CreateUsbDevicesInfoList(&devlist, &devlistSize))
     {
-        for (i = 0; i < devlistSize; ++i)
+        for (i = 0; i < devlistSize && *devices_used < devices_max; ++i)
         {
+#ifdef _DEBUG
+            UsbLpt_DebugPrintUsbInfo(&devlist[i]);
+#endif
             if (devlist[i].vid != USBLPT_VID || devlist[i].pid != USBLPT_PID)
             {
                 continue;
@@ -197,25 +252,29 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
     return true;
 }
 
-///////////////////////////
+/* QUICK AND DIRTY WINDOWS GUI BUILDING */
 
-
-static HWND ListBox;
-static HWND MainWindow;
-static HWND SubmitButton;
-static LRESULT ListBoxSelection;
-#define SUBMIT_BTN 77
+struct WindowParams_t
+{
+    HWND ListBox;
+    HWND MainWindow;
+    HWND SubmitButton;
+    LRESULT ListBoxSelection;
+    WORD SubmitBtnId;
+}WindowParams;
 static LRESULT CALLBACK ChoiceWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     RECT rcOwner;
     RECT rcDlg;
     RECT rc;
     HWND hwndOwner;
+    CREATESTRUCT* cs;
 
     switch (uMsg)
     {
         case WM_CREATE:
-        ListBoxSelection = LB_ERR;
+        cs = (CREATESTRUCT*)lParam;
+        WindowParams.ListBoxSelection = LB_ERR;
 
         if ((hwndOwner = GetParent(hwnd)) == NULL)
         {
@@ -235,23 +294,18 @@ static LRESULT CALLBACK ChoiceWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
 
         case WM_COMMAND:
         {
-            switch (LOWORD(wParam))
+            if(LOWORD(wParam) == WindowParams.SubmitBtnId)
             {
-                case SUBMIT_BTN:
-                ListBoxSelection = SendMessage(ListBox, CB_GETCURSEL, 0, 0);
-                DestroyWindow(SubmitButton);
-                DestroyWindow(ListBox);
-                DestroyWindow(MainWindow);
-                break;
-
-                default:
-                break;
+                WindowParams.ListBoxSelection = SendMessage(WindowParams.ListBox, CB_GETCURSEL, 0, 0);
+                DestroyWindow(WindowParams.SubmitButton);
+                DestroyWindow(WindowParams.ListBox);
+                DestroyWindow(WindowParams.MainWindow);
             }
         }
         break;
 
         case WM_DESTROY:
-        PostQuitMessage((int)ListBoxSelection);
+        PostQuitMessage((int)WindowParams.ListBoxSelection);
         return 0;
 
         default:
@@ -282,20 +336,22 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
         }
     }
 
-    MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
-    if (!MainWindow)
+    WindowParams.SubmitBtnId = 77;
+
+    WindowParams.MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
+    if (!WindowParams.MainWindow)
     {
         return MAXSIZE_T;
     }
 
-    ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 280, 190, MainWindow, NULL, GetModuleHandle(NULL), NULL);
-    if (!ListBox)
+    WindowParams.ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 280, 190, WindowParams.MainWindow, NULL, GetModuleHandle(NULL), NULL);
+    if (!WindowParams.ListBox)
     {
         return MAXSIZE_T;
     }
 
-    SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 280, 25, MainWindow, (HMENU)SUBMIT_BTN, GetModuleHandle(NULL), NULL);
-    if (!SubmitButton)
+    WindowParams.SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 280, 25, WindowParams.MainWindow, (HMENU)WindowParams.SubmitBtnId, GetModuleHandle(NULL), NULL);
+    if (!WindowParams.SubmitButton)
     {
         return MAXSIZE_T;
     }
@@ -304,16 +360,16 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
     {
         wchar_t label[128];
         swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.revision, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
-        SendMessage(ListBox, CB_ADDSTRING, 0, (LPARAM)label);
+        SendMessage(WindowParams.ListBox, CB_ADDSTRING, 0, (LPARAM)label);
     }
 
-    ShowWindow(SubmitButton, SW_SHOW);
-    ShowWindow(ListBox, SW_SHOW);
-    ShowWindow(MainWindow, SW_SHOW);
+    ShowWindow(WindowParams.SubmitButton, SW_SHOW);
+    ShowWindow(WindowParams.ListBox, SW_SHOW);
+    ShowWindow(WindowParams.MainWindow, SW_SHOW);
 
-    UpdateWindow(MainWindow);
-    UpdateWindow(ListBox);
-    UpdateWindow(SubmitButton);
+    UpdateWindow(WindowParams.MainWindow);
+    UpdateWindow(WindowParams.ListBox);
+    UpdateWindow(WindowParams.SubmitButton);
 
     while (GetMessage(&msg, NULL, 0, 0))
     {

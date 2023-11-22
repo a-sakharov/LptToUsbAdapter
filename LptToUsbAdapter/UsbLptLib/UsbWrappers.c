@@ -574,6 +574,8 @@ static PSP_DEVICE_INTERFACE_DETAIL_DATA SetupDiGetDeviceInterfaceDetailAlloc(HDE
     return device_detail;
 }
 
+/* PUBLIC FUNCTIONS */
+
 bool USBWRAP_CreateUsbDevicesInfoList(UsbDeviceInfo** devInfoList, size_t* devInfoListSize)
 {
     HDEVINFO deviceInfo;
