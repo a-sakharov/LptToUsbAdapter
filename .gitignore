@@ -1,0 +1,12 @@
+LptToUsbAdapter/.vs/*
+LptToUsbAdapter/Debug/*
+LptToUsbAdapter/Release/*
+LptToUsbAdapter/*/Debug/*
+LptToUsbAdapter/*/Release/*
+Firmware/*
+!Firmware/AVRUSBLPT
+Firmware/AVRUSBLPT/Debug/*
+Firmware/AVRUSBLPT/Release/*
+Firmware/AVRUSBLPT/.vs/*
+Schematics/*
+!Schematics/AVRUSBLPT
