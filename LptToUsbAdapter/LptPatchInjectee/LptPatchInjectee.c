@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdnoreturn.h>
-#include "UsbLptLib.h"
+#include "../LptPatchInjector/CommonCode.h"
+#include <UsbLptLib.h>
 
 typedef HANDLE(WINAPI* CreateFileA_t)(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
 static CreateFileA_t TrueCreateFileA;
@@ -190,43 +191,13 @@ _declspec(dllexport) void dummy()
 
 }
 
-noreturn void Die(wchar_t* reason, bool isSystemFail)
-{
-    DWORD error;
-
-    if (isSystemFail)
-    {
-        error = GetLastError();
-
-        wchar_t* errorDescription = NULL;
-        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&errorDescription, 0, 0) != 0)
-        {
-            MessageBox(NULL, errorDescription, reason, MB_OK | MB_ICONERROR);
-            HeapFree(GetProcessHeap(), 0, errorDescription);
-        }
-        else
-        {
-            MessageBox(NULL, reason, L"Can not get error details", MB_OK | MB_ICONERROR);
-        }
-    }
-    else
-    {
-        MessageBox(NULL, reason, L"Internal error", MB_OK | MB_ICONERROR);
-    }
-
-    //exit(-1);
-    ExitProcess(-1);
-}
-
-
+struct LptPatchSettings_t Settings;
 USBLPT UsbLpt;
-uint16_t bypassPorts[] = {
-        0x77A
-};
 
-void OpenUsbLpt()
+void Init()
 {
-    if (UsbLpt)
+    static bool InitCompleted = false;
+    if (InitCompleted)
     {
         return;
     }
@@ -241,16 +212,20 @@ void OpenUsbLpt()
     {
         Die(L"Can't configure USBLPT", false);
     }
+
+    LoadSettings(SETTINGS_FILE_NAME, &Settings);
+
+    InitCompleted = true;
 }
 
 __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
 {
-    OpenUsbLpt();
+    Init();
 
     size_t i;
-    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+    for (i = 0; i < Settings.behavior.bypass_ports_cnt; ++i)
     {
-        if (port == bypassPorts[i])
+        if (port == Settings.behavior.bypass_ports[i])
         {
             return;
         }
@@ -270,12 +245,12 @@ __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
 
  __declspec(dllexport) uint8_t _cdecl ReadPort8(uint16_t port)
 {
-    OpenUsbLpt();
+     Init();
 
     size_t i;
-    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+    for (i = 0; i < Settings.behavior.bypass_ports_cnt; ++i)
     {
-        if (port == bypassPorts[i])
+        if (port == Settings.behavior.bypass_ports[i])
         {
             return 0;
         }

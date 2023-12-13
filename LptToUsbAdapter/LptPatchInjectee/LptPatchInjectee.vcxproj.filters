@@ -18,5 +18,13 @@
     <ClCompile Include="LptPatchInjectee.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\LptPatchInjector\CommonCode.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\LptPatchInjector\CommonCode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

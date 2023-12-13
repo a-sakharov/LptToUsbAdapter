@@ -2,7 +2,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
-#include <stdnoreturn.h>
 #include <time.h>
 #include <detours.h>
 #include <UsbLptLib.h>
@@ -10,7 +9,7 @@
 #include <psapi.h>
 #include <stdarg.h>
 #include "ld32.h"
-#include <iniparser.h>
+#include "CommonCode.h"
 
 
 #define FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction) \
@@ -28,9 +27,6 @@ if(inst_buf[0] == (byte0) && inst_buf[1] == (byte1)) FILL_INSTRUCTION_DATA(_inst
 if(inst_buf[0] == (byte0)) FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction)
 
 #define PATCH_DLL_NAME "LptPatchInjectee32.dll"
-#define DEFAULT_APPLICATION_NAME "Orange.exe"
-//#define DEFAULT_APPLICATION_NAME "LptPortAccessDemo.exe"
-#define SETTINGS_FILE_NAME "LptPatch.ini"
 
 #pragma pack(push, 1)
 typedef union JmpFar_t
@@ -57,106 +53,7 @@ void* ReadPort8;
 
 USBLPT UsbLpt;
 
-struct LptPatchSettings_t
-{
-    struct
-    {
-        char* application_path;
-
-    }target;
-
-    struct
-    {
-        bool use_mempatch;
-        uint16_t* bypass_ports;
-        uint16_t bypass_ports_cnt;
-        bool patch_winio_load;
-        bool emulate_lpt_in_registry;
-    }behavior;
-
-    struct
-    {
-        uint16_t base_address;
-        char* mode;
-    }lpt;
-
-    struct
-    {
-        bool enabled;
-        char* file_intercepted_calls;
-        char* file_patched_areas;
-        char* file_errors;
-    }logging;
-}Settings = { 0 };
-
-void LogLine(const char* file, char* line)
-{
-    OutputDebugStringA(line);
-    OutputDebugStringA("\n");
-
-    FILE* logFile;
-    if (fopen_s(&logFile, file, "a"))
-    {
-        return;
-    }
-
-    char timebuffer[128];
-    time_t utime;
-    struct tm utm;
-
-    utime = time(0);
-
-    gmtime_s(&utm, &utime);
-
-    //asctime_s(timebuffer, sizeof(timebuffer), &utm);
-    strftime(timebuffer, sizeof(timebuffer), "%Y-%m-%d %H:%M:%S", &utm);
-
-    fprintf(logFile, "%s: %s\n", timebuffer, line);
-
-    fclose(logFile);
-}
-
-void PrintInstructionDumpAt(const char* file, HANDLE process, char* prefix, PVOID address, size_t len)
-{
-    uint8_t* instruction_buffer;
-    size_t i;
-
-    instruction_buffer = malloc(len);
-    if (!instruction_buffer)
-    {
-        return;
-    }
-
-    SIZE_T readed;
-    if (!ReadProcessMemory(process, address, instruction_buffer, len, &readed) || readed != len)
-    {
-        free(instruction_buffer);
-        return;
-    }
-
-    char* instruction_buffer_hexline;// [sizeof(instruction_buffer) * 3 + 1 + 64] ;
-    size_t instruction_buffer_hexline_len = len * 3 + 1 + strlen(prefix);
-
-    instruction_buffer_hexline = malloc(instruction_buffer_hexline_len);
-    if (!instruction_buffer_hexline)
-    {
-        free(instruction_buffer);
-        return;
-    }
-
-    snprintf(instruction_buffer_hexline, instruction_buffer_hexline_len, "%s (at %p): ", prefix, address);
-
-    for (i = 0; i < len; ++i)
-    {
-        snprintf(instruction_buffer_hexline + strlen(instruction_buffer_hexline), instruction_buffer_hexline_len - strlen(instruction_buffer_hexline), "%.2hhX ", instruction_buffer[i]);
-    }
-
-    free(instruction_buffer);
-
-    LogLine(file, instruction_buffer_hexline);
-
-    free(instruction_buffer_hexline);
-}
+struct LptPatchSettings_t Settings = { 0 };
 
 bool FindExternalProcessDllFnAddresses(char* dll_name, HANDLE process, size_t functions, ...)
 {
@@ -541,144 +438,6 @@ bool GetPatchDllPath(char* path, size_t max_len)
     return PathFileExistsA(path) == TRUE;
 }
 
-noreturn void Die(wchar_t* reason, bool isSystemFail)
-{
-    DWORD error;
-
-    if (isSystemFail)
-    {
-        error = GetLastError();
-
-        wchar_t* errorDescription = NULL;
-        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&errorDescription, 0, 0) != 0)
-        {
-            MessageBox(NULL, errorDescription, reason, MB_OK | MB_ICONERROR);
-            HeapFree(GetProcessHeap(), 0, errorDescription);
-        }
-        else
-        {
-            MessageBox(NULL, reason, L"Can not get error details", MB_OK | MB_ICONERROR);
-        }
-    }
-    else
-    {
-        MessageBox(NULL, reason, L"Internal error", MB_OK | MB_ICONERROR);
-    }
-
-    exit(-1);
-}
-
-char* strdup_die(const char* str)
-{
-    char* r = _strdup(str);
-    if (!r)
-    {
-        Die(L"Error: cant allocate memory for string", true);
-    }
-    return r;
-}
-
-static void LoadSettings()
-{
-    dictionary* lpt_patch_settings;
-    struct
-    {
-        char* key;
-        char* default_value;
-    }
-    defaults[] =
-    {
-        {"target", NULL},
-        {"target:application_path", DEFAULT_APPLICATION_NAME},
-
-        {"behavior", NULL},
-        {"behavior:use_mempatch", "True"},
-        {"behavior:bypass_ports", "0x77A 0x2F8 0x2F9 0x2FA 0x2FB 0x2FC 0x2FD 0x2FE 0x2FF"},
-        {"behavior:patch_winio_load", "True"},          //TODO: implement
-        {"behavior:emulate_lpt_in_registry", "True"},   //TODO: implement
-
-        {"lpt", NULL},
-        {"lpt:base_address", "0x378"},
-        {"lpt:mode", "EPP"}, 
-
-        {"logging", NULL},
-        {"logging:enabled", "False"},
-        {"logging:file_intercepted_calls", "calls.log"},
-        {"logging:file_patched_areas", "patches.log"},
-        {"logging:file_errors", "errors.log"},
-    };
-    bool update_required = false;
-
-    lpt_patch_settings = iniparser_load(SETTINGS_FILE_NAME);
-    if (!lpt_patch_settings)
-    {
-        lpt_patch_settings = dictionary_new(0);
-    }
-
-    if (!lpt_patch_settings)
-    {
-        Die(L"Error create/load default settings", false);
-    }
-
-    size_t i;
-    for (i = 0; i < sizeof(defaults) / sizeof(*defaults); ++i)
-    {
-        if (!iniparser_find_entry(lpt_patch_settings, defaults[i].key))
-        {
-            iniparser_set(lpt_patch_settings, defaults[i].key, defaults[i].default_value);
-            update_required = true;
-        }
-    }
-
-    if (update_required)
-    {
-        FILE* f;
-        if (fopen_s(&f, SETTINGS_FILE_NAME, "wt") == 0)
-        {
-            iniparser_dump_ini(lpt_patch_settings, f);
-            fclose(f);
-        }
-        else
-        {
-            Die(L"Error save default settings", true);
-        }
-    }
-
-    Settings.target.application_path = strdup_die(iniparser_getstring(lpt_patch_settings, "target:application_path", ""));
-
-    Settings.behavior.use_mempatch = iniparser_getboolean(lpt_patch_settings, "behavior:use_mempatch", true);
-    const char* bypass_ports = iniparser_getstring(lpt_patch_settings, "behavior:bypass_ports", NULL);
-    Settings.behavior.patch_winio_load = iniparser_getboolean(lpt_patch_settings, "behavior:patch_winio_load", true);
-    Settings.behavior.emulate_lpt_in_registry = iniparser_getboolean(lpt_patch_settings, "behavior:emulate_lpt_in_registry", true);
-
-    Settings.lpt.base_address = iniparser_getint(lpt_patch_settings, "lpt:base_address", 0x378);
-    Settings.lpt.mode = strdup_die(iniparser_getstring(lpt_patch_settings, "lpt:mode", NULL));
-
-    Settings.logging.enabled = iniparser_getboolean(lpt_patch_settings, "logging:enabled", true);
-    Settings.logging.file_intercepted_calls = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_intercepted_calls", NULL));
-    Settings.logging.file_patched_areas = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_patched_areas", NULL));
-    Settings.logging.file_errors = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_errors", NULL));
-
-    char* strtok_ctx = NULL;
-    char* port;
-    port = strtok_s((char*)bypass_ports, " ,", &strtok_ctx);
-    while (port)
-    {
-        Settings.behavior.bypass_ports_cnt++;
-        void* tmp = realloc(Settings.behavior.bypass_ports, sizeof(*Settings.behavior.bypass_ports) * Settings.behavior.bypass_ports_cnt);
-        if (!tmp)
-        {
-            Die(L"Error memory allocation while reading bypass ports", true);
-        }
-        Settings.behavior.bypass_ports = tmp;
-        Settings.behavior.bypass_ports[Settings.behavior.bypass_ports_cnt - 1] = (uint16_t)strtoul(port, NULL, 0);
-
-        port = strtok_s(NULL, " ,", &strtok_ctx);
-    }
-
-    iniparser_freedict(lpt_patch_settings);
-}
-
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     DebugSetProcessKillOnExit(TRUE);
@@ -687,7 +446,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     wchar_t appPath[MAX_PATH];
     char patchDllPath[MAX_PATH];
 
-    LoadSettings();
+    LoadSettings(SETTINGS_FILE_NAME, &Settings);
 
     if (sizeof(void*) != 4)
     {

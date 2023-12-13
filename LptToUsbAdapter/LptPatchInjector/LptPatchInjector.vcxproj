@@ -156,10 +156,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CommonCode.c" />
     <ClCompile Include="ld32.c" />
     <ClCompile Include="LptPatchInjector.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CommonCode.h" />
     <ClInclude Include="ld32.h" />
   </ItemGroup>
   <ItemGroup>

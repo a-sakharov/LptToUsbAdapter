@@ -21,9 +21,15 @@
     <ClCompile Include="ld32.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CommonCode.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ld32.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CommonCode.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
