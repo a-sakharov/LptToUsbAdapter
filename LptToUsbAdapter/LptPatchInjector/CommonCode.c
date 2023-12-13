@@ -142,6 +142,16 @@ void LoadSettings(char *settings_file, struct LptPatchSettings_t *settings)
     iniparser_freedict(lpt_patch_settings);
 }
 
+void FreeSettings(struct LptPatchSettings_t* settings)
+{
+    free(settings->target.application_path);
+    free(settings->lpt.mode);
+    free(settings->logging.file_intercepted_calls);
+    free(settings->logging.file_patched_areas);
+    free(settings->logging.file_errors);
+    free(settings->behavior.bypass_ports);
+}
+
 void LogLine(const char* file, char* line)
 {
 #ifdef _DEBUG
@@ -149,10 +159,49 @@ void LogLine(const char* file, char* line)
     OutputDebugStringA("\n");
 #endif
 
-    FILE* logFile;
-    if (fopen_s(&logFile, file, "a"))
+    static struct
     {
-        return;
+        FILE* file;
+        char name[MAX_PATH];
+        bool used;
+    } opened_logs_cache[5] = {0};
+    size_t i;
+    size_t index_in_cache;
+    bool found_in_cache = false;
+
+    for (i = 0; i < sizeof(opened_logs_cache) / sizeof(*opened_logs_cache); ++i)
+    {
+        if (opened_logs_cache[i].used && !strcmp(opened_logs_cache[i].name, file))
+        {
+            found_in_cache = true;
+            index_in_cache = i;
+            break;
+        }
+    }
+
+    if (!found_in_cache)
+    {
+        for (i = 0; i < sizeof(opened_logs_cache) / sizeof(*opened_logs_cache); ++i)
+        {
+            if (!opened_logs_cache[i].used)
+            {
+                found_in_cache = true;
+
+                if (fopen_s(&opened_logs_cache[i].file, file, "a"))
+                {
+                    return;
+                }
+                index_in_cache = i;
+                opened_logs_cache[i].used = true;
+                strncpy_s(opened_logs_cache[i].name, sizeof(opened_logs_cache[i].name), file, strlen(file));
+                break;
+            }
+        }
+    }
+
+    if (!found_in_cache)
+    {
+        return; //no more place in cache...
     }
 
     char timebuffer[128];
@@ -166,11 +215,9 @@ void LogLine(const char* file, char* line)
     //asctime_s(timebuffer, sizeof(timebuffer), &utm);
     strftime(timebuffer, sizeof(timebuffer), "%Y-%m-%d %H:%M:%S", &utm);
 
-    fprintf(logFile, "%s: %s\n", timebuffer, line);
+    fprintf(opened_logs_cache[index_in_cache].file, "%s: %s\n", timebuffer, line);
 
-    fflush(logFile);
-
-    fclose(logFile);
+    fflush(opened_logs_cache[index_in_cache].file);
 }
 
 void PrintInstructionDumpAt(const char* file, HANDLE process, char* prefix, PVOID address, size_t len)

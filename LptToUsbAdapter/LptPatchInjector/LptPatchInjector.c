@@ -584,5 +584,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         UsbLpt_Close(UsbLpt);
     }
 
+    FreeSettings(&Settings);
+
     return 0;
 }

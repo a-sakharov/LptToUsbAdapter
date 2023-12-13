@@ -23,8 +23,6 @@ static RegQueryValueExA_t TrueRegQueryValueExA;
 
 static HANDLE WinIoHookHandle;
 
-noreturn void Die(wchar_t* reason, bool isSystemFail);
-
 HANDLE WINAPI CreateFileA_filter(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
     bool winIoAccess = false;
@@ -126,12 +124,44 @@ LSTATUS APIENTRY RegQueryValueExA_filter(HKEY hKey, LPCSTR lpValueName, LPDWORD 
     return TrueRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 }
 
+struct LptPatchSettings_t Settings;
+USBLPT UsbLpt;
+
+void Init()
+{
+    static bool InitCompleted = false;
+    if (InitCompleted)
+    {
+        return;
+    }
+
+    LoadSettings(SETTINGS_FILE_NAME, &Settings);
+
+    if (Settings.behavior.use_mempatch)
+    {
+        UsbLpt = UsbLpt_OpenAuto();
+        if (!UsbLpt)
+        {
+            Die(L"Can't open USBLPT", false);
+        }
+
+        if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
+        {
+            Die(L"Can't configure USBLPT", false);
+        }
+    }
+
+    InitCompleted = true;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
     if (DetourIsHelperProcess()) 
     {
         return TRUE;
     }
+
+    Init();
 
     // Perform actions based on the reason for calling.
     switch (fdwReason)
@@ -142,21 +172,26 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             DetourTransactionBegin();
             DetourUpdateThread(GetCurrentThread());
 
-            TrueCreateFileA = DetourFindFunction("Kernel32.dll", "CreateFileA");
-            DetourAttach(&(PVOID)TrueCreateFileA, CreateFileA_filter);
+            if (Settings.behavior.patch_winio_load)
+            {
+                TrueCreateFileA = DetourFindFunction("Kernel32.dll", "CreateFileA");
+                DetourAttach(&(PVOID)TrueCreateFileA, CreateFileA_filter);
 
-            TrueDeviceIoControl = DetourFindFunction("Kernel32.dll", "DeviceIoControl");
-            DetourAttach(&(PVOID)TrueDeviceIoControl, DeviceIoControl_filter);
+                TrueDeviceIoControl = DetourFindFunction("Kernel32.dll", "DeviceIoControl");
+                DetourAttach(&(PVOID)TrueDeviceIoControl, DeviceIoControl_filter);
+            }
 
-			TrueRegOpenKeyExA = DetourFindFunction("Advapi32.dll", "RegOpenKeyExA");
-            DetourAttach(&(PVOID)TrueRegOpenKeyExA, RegOpenKeyExA_filter);
+            if (Settings.behavior.emulate_lpt_in_registry)
+            {
+                TrueRegOpenKeyExA = DetourFindFunction("Advapi32.dll", "RegOpenKeyExA");
+                DetourAttach(&(PVOID)TrueRegOpenKeyExA, RegOpenKeyExA_filter);
 
-			TrueRegEnumValueA = DetourFindFunction("Advapi32.dll", "RegEnumValueA");
-            DetourAttach(&(PVOID)TrueRegEnumValueA, RegEnumValueA_filter);
+                TrueRegEnumValueA = DetourFindFunction("Advapi32.dll", "RegEnumValueA");
+                DetourAttach(&(PVOID)TrueRegEnumValueA, RegEnumValueA_filter);
 
-			TrueRegQueryValueExA = DetourFindFunction("Advapi32.dll", "RegQueryValueExA");
-            DetourAttach(&(PVOID)TrueRegQueryValueExA, RegQueryValueExA_filter);
-
+                TrueRegQueryValueExA = DetourFindFunction("Advapi32.dll", "RegQueryValueExA");
+                DetourAttach(&(PVOID)TrueRegQueryValueExA, RegQueryValueExA_filter);
+            }
             DetourTransactionCommit();
             
             break;
@@ -173,13 +208,20 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             
             DetourTransactionBegin();
             DetourUpdateThread(GetCurrentThread());
-            DetourDetach(&(PVOID)TrueCreateFileA, CreateFileA_filter);
-            DetourDetach(&(PVOID)TrueDeviceIoControl, DeviceIoControl_filter);
-            DetourDetach(&(PVOID)TrueRegOpenKeyExA, RegOpenKeyExA_filter);
-            DetourDetach(&(PVOID)TrueRegEnumValueA, RegEnumValueA_filter);
-            DetourDetach(&(PVOID)TrueRegQueryValueExA, RegQueryValueExA_filter);
+            if (Settings.behavior.patch_winio_load)
+            {
+                DetourDetach(&(PVOID)TrueCreateFileA, CreateFileA_filter);
+                DetourDetach(&(PVOID)TrueDeviceIoControl, DeviceIoControl_filter);
+            }
+            if (Settings.behavior.emulate_lpt_in_registry)
+            {
+                DetourDetach(&(PVOID)TrueRegOpenKeyExA, RegOpenKeyExA_filter);
+                DetourDetach(&(PVOID)TrueRegEnumValueA, RegEnumValueA_filter);
+                DetourDetach(&(PVOID)TrueRegQueryValueExA, RegQueryValueExA_filter);
+            }
             DetourTransactionCommit();
             
+            FreeSettings(&Settings);
             // Perform any necessary cleanup.
             break;
     }
@@ -189,33 +231,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 _declspec(dllexport) void dummy()
 {
 
-}
-
-struct LptPatchSettings_t Settings;
-USBLPT UsbLpt;
-
-void Init()
-{
-    static bool InitCompleted = false;
-    if (InitCompleted)
-    {
-        return;
-    }
-
-    UsbLpt = UsbLpt_OpenAuto();
-    if (!UsbLpt)
-    {
-        Die(L"Can't open USBLPT", false);
-    }
-
-    if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
-    {
-        Die(L"Can't configure USBLPT", false);
-    }
-
-    LoadSettings(SETTINGS_FILE_NAME, &Settings);
-
-    InitCompleted = true;
 }
 
 __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)
