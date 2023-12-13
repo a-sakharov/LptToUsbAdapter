@@ -27,14 +27,51 @@ if(instr_ptr[0] == (byte0) && instr_ptr[1] == (byte1)) FILL_INSTRUCTION_DATA(_in
 #define CHECK_OPERATION_1B(byte0, _instruction_sz, _port, _io_size, _out_direction) \
 if(instr_ptr[0] == (byte0)) FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction)
 
-#ifdef _DEBUG
-void LogLine(char* line)
+#define PATCH_DLL_NAME "LptPatchInjectee32.dll"
+#define DEFAULT_APPLICATION_NAME "Orange.exe"
+//#define DEFAULT_APPLICATION_NAME "LptPortAccessDemo.exe"
+#define SETTINGS_FILE_NAME "LptPatch.ini"
+
+#pragma pack(push, 1)
+typedef union JmpFar_t
+{
+    uint8_t bytes[6];
+
+    struct
+    {
+        uint8_t push;
+        void* addr;
+        uint8_t ret;
+    };
+
+} JmpFar;
+#pragma pack(pop)
+
+extern void* out_byte_fn;
+extern uint32_t out_byte_fn_size;
+extern void* in_byte_fn;
+extern uint32_t in_byte_fn_size;
+
+void* WritePort8;
+void* ReadPort8;
+
+USBLPT UsbLpt;
+
+dictionary* LptPatchSettings;
+
+const char* CallsLogFile;
+const char* PatchesLogFile;
+const char* ErrorsLogFile;
+bool EnableLogging;
+bool MemoryPatchMode;
+
+void LogLine(const char *file, char* line)
 {
     OutputDebugStringA(line);
     OutputDebugStringA("\n");
 
     FILE* logFile;
-    if (fopen_s(&logFile, "LptPatchInjector.log", "a"))
+    if (fopen_s(&logFile, file, "a"))
     {
         return;
     }
@@ -55,7 +92,7 @@ void LogLine(char* line)
     fclose(logFile);
 }
 
-void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t len)
+void PrintInstructionDumpAt(const char *file, HANDLE process, char* prefix, PVOID address, size_t len)
 {
     uint8_t *instruction_buffer;
     size_t i;
@@ -77,7 +114,7 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
     size_t instruction_buffer_hexline_len = len * 3 + 1 + strlen(prefix);
 
     instruction_buffer_hexline = malloc(instruction_buffer_hexline_len);
-    if (!instruction_buffer_hexline_len)
+    if (!instruction_buffer_hexline)
     {
         free(instruction_buffer);
         return;
@@ -92,40 +129,10 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 
     free(instruction_buffer);
 
-    LogLine(instruction_buffer_hexline);
+    LogLine(file, instruction_buffer_hexline);
 
     free(instruction_buffer_hexline);
 }
-#endif
-
-USBLPT UsbLpt;
-dictionary* LptPatchSettings;
-#define MEMORY_PATCH_MODE
-
-#if defined(MEMORY_PATCH_MODE)
-#pragma pack(push, 1)
-typedef union JmpFar_t
-{
-    uint8_t bytes[6];
-    
-    struct
-    {
-        uint8_t push;
-        void* addr;
-        uint8_t ret;
-    };
-    
-} JmpFar;
-#pragma pack(pop)
-
-extern void* out_byte_fn;
-extern uint32_t out_byte_fn_size;
-extern void* in_byte_fn;
-extern uint32_t in_byte_fn_size;
-
-
-void* WritePort8;
-void* ReadPort8;
 
 bool FindExternalProcessDllFnAddresses(char* dll_name, HANDLE process, size_t functions, ...)
 {
@@ -145,6 +152,7 @@ bool FindExternalProcessDllFnAddresses(char* dll_name, HANDLE process, size_t fu
     HMODULE mod = LoadLibraryExA(dll_name, NULL, DONT_RESOLVE_DLL_REFERENCES);
     if (mod == NULL)
     {
+        free(relative_addresses);
         return false;
     }
 
@@ -224,7 +232,6 @@ bool FindExternalProcessDllFnAddresses(char* dll_name, HANDLE process, size_t fu
 
     return found_module;
 }
-#endif
 
 bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address)
 {
@@ -273,200 +280,202 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
     else CHECK_OPERATION_1B(0xEF, 1, edx & 0xFFFF, 32, true)        //OUT 32 DX
     else
     {
-#ifdef _DEBUG
-        char buffer[128];
-        snprintf(buffer, sizeof(buffer), "Undefined instruction: %.2hhX %.2hhX %.2hhX", instr_ptr[0], instr_ptr[1], instr_ptr[2]);
-        LogLine(buffer);
-#endif
-        return false;
-    }
-
-#if defined(MEMORY_PATCH_MODE)
-    //create mempatch
-
-#ifdef _DEBUG
-    PrintInstructionDumpAt(process, "pre-patched IO call area", exception_address, 32);
-#endif
-
-    if (io_size != 8 || instruction_sz != 1) //only 8 bit io, only port address in DX, only LPT1
-    {
-        return false;
-    }
-
-    JmpFar jmp_far;
-
-    int len_this;
-    SIZE_T len_total = 0;
-    size_t x = sizeof(JmpFar);
-    LPVOID remoteInoutWorker;
-    while (len_total < sizeof(jmp_far))
-    {
-        len_this = length_disasm(instr_ptr + len_total, sizeof(instr_ptr) - len_total);
-        if (len_this < 1)
+        if (EnableLogging)
         {
-            return false;//eh
+            char buffer[128];
+            snprintf(buffer, sizeof(buffer), "Undefined instruction: %.2hhX %.2hhX %.2hhX", instr_ptr[0], instr_ptr[1], instr_ptr[2]);
+            LogLine(ErrorsLogFile, buffer);
         }
-        len_total += len_this;
-    }
-
-    PVOID worker_fn = out_direction ? &out_byte_fn : &in_byte_fn;
-    uint32_t worker_size = out_direction ? out_byte_fn_size : in_byte_fn_size;
-    void* remote_io_fn = out_direction ? WritePort8 : ReadPort8;
-
-    remoteInoutWorker = VirtualAllocEx(process, NULL, (len_total - instruction_sz) + sizeof(JmpFar) + worker_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-    if (!remoteInoutWorker)
-    {
         return false;
-    }
-
-    SIZE_T written;
-
-    //copy worker function
-    if (!WriteProcessMemory(process, remoteInoutWorker, worker_fn, worker_size, &written) || written != worker_size)
-    {
-        return false;
-    }
-
-    //copy calling ptr to worker fn
-    if (!WriteProcessMemory(process, remoteInoutWorker, &remote_io_fn, sizeof(remote_io_fn), &written) || written != sizeof(remote_io_fn))
-    {
-        return false;
-    }
-
-    //copy old instructions, but not IO call
-    if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + worker_size), instr_ptr + instruction_sz, len_total - instruction_sz, &written) || written != len_total - instruction_sz)
-    {
-        return false;
-    }
-
-    //patch old IO call
-    if (len_total > sizeof(instr_ptr))
-    {
-        return false;
-    }
-    memset(instr_ptr, 0x90, len_total);
-    JmpFar* jumpToWorker = (JmpFar*)instr_ptr;
-    jumpToWorker->push = 0x68;
-    jumpToWorker->ret = 0xc3;
-    jumpToWorker->addr = (uint8_t*)remoteInoutWorker + 4;//first 4 bytes - real worker address
-
-    if (!WriteProcessMemory(process, exception_address, instr_ptr, len_total, &written) || written != len_total)
-    {
-        return false;
-    }
-
-    //and finally, write jump to old address
-    jumpToWorker->addr = (uint8_t*)exception_address + len_total;
-    if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + (len_total - instruction_sz) + worker_size), jumpToWorker, sizeof(JmpFar), &written) || written != sizeof(JmpFar))
-    {
-        return false;
-    }
-
-#ifdef _DEBUG
-    PrintInstructionDumpAt(process, "patched IO call area", exception_address, 32);
-    PrintInstructionDumpAt(process, "worker area", remoteInoutWorker, 32);
-#endif
-
-#else
-
-    for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
-    {
-        if (port == bypassPorts[i])
-        {
-            bypassMode = true;
-            break;
-        }
-    }
-
-    if (!bypassMode)
-    {
-        if (io_size != 8 || port < 0x378 || port > 0x37c) //only 8 bit io, only LPT1
-        {
-            return false;
         }
 
-        if (out_direction)
+        if (MemoryPatchMode)
         {
-            if (io_size == 32)
+            //create mempatch
+
+            if (EnableLogging)
             {
-                data = eax;
-            }
-            else if (io_size == 16)
-            {
-                data = eax & 0xFFFF;
-            }
-            else
-            {
-                data = eax & 0xFF;
+                PrintInstructionDumpAt(PatchesLogFile, process, "pre-patched IO call area", exception_address, 32);
             }
 
-            if (!UsbLpt_SetPort8(UsbLpt, port - 0x378, (uint8_t)data))
+            if (io_size != 8 || instruction_sz != 1) //only 8 bit io, only port address in DX, only LPT1
             {
                 return false;
             }
+
+            JmpFar jmp_far;
+
+            int len_this;
+            SIZE_T len_total = 0;
+            size_t x = sizeof(JmpFar);
+            LPVOID remoteInoutWorker;
+            while (len_total < sizeof(jmp_far))
+            {
+                len_this = length_disasm(instr_ptr + len_total, sizeof(instr_ptr) - len_total);
+                if (len_this < 1)
+                {
+                    return false;//eh
+                }
+                len_total += len_this;
+            }
+
+            PVOID worker_fn = out_direction ? &out_byte_fn : &in_byte_fn;
+            uint32_t worker_size = out_direction ? out_byte_fn_size : in_byte_fn_size;
+            void* remote_io_fn = out_direction ? WritePort8 : ReadPort8;
+
+            remoteInoutWorker = VirtualAllocEx(process, NULL, (len_total - instruction_sz) + sizeof(JmpFar) + worker_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+            if (!remoteInoutWorker)
+            {
+                return false;
+            }
+
+            SIZE_T written;
+
+            //copy worker function
+            if (!WriteProcessMemory(process, remoteInoutWorker, worker_fn, worker_size, &written) || written != worker_size)
+            {
+                return false;
+            }
+
+            //copy calling ptr to worker fn
+            if (!WriteProcessMemory(process, remoteInoutWorker, &remote_io_fn, sizeof(remote_io_fn), &written) || written != sizeof(remote_io_fn))
+            {
+                return false;
+            }
+
+            //copy old instructions, but not IO call
+            if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + worker_size), instr_ptr + instruction_sz, len_total - instruction_sz, &written) || written != len_total - instruction_sz)
+            {
+                return false;
+            }
+
+            //patch old IO call
+            if (len_total > sizeof(instr_ptr))
+            {
+                return false;
+            }
+            memset(instr_ptr, 0x90, len_total);
+            JmpFar* jumpToWorker = (JmpFar*)instr_ptr;
+            jumpToWorker->push = 0x68;
+            jumpToWorker->ret = 0xc3;
+            jumpToWorker->addr = (uint8_t*)remoteInoutWorker + 4;//first 4 bytes - real worker address
+
+            if (!WriteProcessMemory(process, exception_address, instr_ptr, len_total, &written) || written != len_total)
+            {
+                return false;
+            }
+
+            //and finally, write jump to old address
+            jumpToWorker->addr = (uint8_t*)exception_address + len_total;
+            if (!WriteProcessMemory(process, (PVOID)((uint8_t*)remoteInoutWorker + (len_total - instruction_sz) + worker_size), jumpToWorker, sizeof(JmpFar), &written) || written != sizeof(JmpFar))
+            {
+                return false;
+            }
+
+            if (EnableLogging)
+            {
+                PrintInstructionDumpAt(PatchesLogFile, process, "patched IO call area", exception_address, 32);
+                PrintInstructionDumpAt(PatchesLogFile, process, "worker area", remoteInoutWorker, 32);
+            }
+
         }
         else
         {
-            uint8_t temp;
-            if (!UsbLpt_GetPort8(UsbLpt, port - 0x378, &temp))
+
+            for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+            {
+                if (port == bypassPorts[i])
+                {
+                    bypassMode = true;
+                    break;
+                }
+            }
+
+            if (!bypassMode)
+            {
+                if (io_size != 8 || port < 0x378 || port > 0x37c) //only 8 bit io, only LPT1
+                {
+                    return false;
+                }
+
+                if (out_direction)
+                {
+                    if (io_size == 32)
+                    {
+                        data = eax;
+                    }
+                    else if (io_size == 16)
+                    {
+                        data = eax & 0xFFFF;
+                    }
+                    else
+                    {
+                        data = eax & 0xFF;
+                    }
+
+                    if (!UsbLpt_SetPort8(UsbLpt, port - 0x378, (uint8_t)data))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    uint8_t temp;
+                    if (!UsbLpt_GetPort8(UsbLpt, port - 0x378, &temp))
+                    {
+                        return false;
+                    }
+
+                    data = temp;
+
+                    if (io_size == 32)
+                    {
+                        eax = data;
+                    }
+                    else if (io_size == 16)
+                    {
+                        eax = (eax & 0xFFFF0000) | (data & 0x0000FFFF);
+                    }
+                    else
+                    {
+                        eax = (eax & 0xFFFFFF00) | (data & 0x000000FF);
+                    }
+                }
+            }
+            threadContext.Eip += instruction_sz; //move EIP +n bytes
+            threadContext.Eax = eax;
+
+            if (!SetThreadContext(thread, &threadContext))
             {
                 return false;
             }
 
-            data = temp;
+            if (EnableLogging)
+            {
+                char buffer[128];
+                if (out_direction)
+                {
+                    snprintf(buffer, sizeof(buffer), "%p OUT.%c 0x%hX, 0x%X", exception_address, io_size == 8 ? 'b' : io_size == 16 ? 'w' : 'd', port, data);
+                }
+                else
+                {
+                    snprintf(buffer, sizeof(buffer), "%p IN.%c 0x%X ; got %X", exception_address, io_size == 8 ? 'b' : io_size == 16 ? 'w' : 'd', port, data);
+                }
 
-            if (io_size == 32)
-            {
-                eax = data;
+                LogLine(CallsLogFile, buffer);
             }
-            else if (io_size == 16)
-            {
-                eax = (eax & 0xFFFF0000) | (data & 0x0000FFFF);
-            }
-            else
-            {
-                eax = (eax & 0xFFFFFF00) | (data & 0x000000FF);
-            }
+
         }
-    }
-    threadContext.Eip += instruction_sz; //move EIP +n bytes
-    threadContext.Eax = eax;
-
-    if (!SetThreadContext(thread, &threadContext))
-    {
-        return false;
-    }
-
-#ifdef _DEBUG
-    char buffer[128];
-    if (out_direction)
-    {
-        snprintf(buffer, sizeof(buffer), "%p OUT.%c 0x%hX, 0x%X", exception_address, io_size == 8 ? 'b' : io_size == 16 ? 'w' : 'd', port, data);
-    }
-    else
-    {
-        snprintf(buffer, sizeof(buffer), "%p IN.%c 0x%X ; got %X", exception_address, io_size == 8 ? 'b' : io_size == 16 ? 'w' : 'd', port, data);
-    }
-
-    LogLine(buffer);
-#endif
-
-#endif
 
 
-    return true;
+        return true;
 }
-
-#define PATCH_DLL_NAME "LptPatchInjectee32.dll"
-#define APPLICATION_NAME "Orange.exe"
-//#define APPLICATION_NAME "LptPortAccessDemo.exe"
-#define SETTINGS_FILE_NAME "LptPatch.ini"
 
 bool GetTargetExePath(wchar_t* path, size_t max_len)
 {
-    char* dst;
+    const char* dst;
 
-    dst = iniparser_getstring(LptPatchSettings, "target:application_path", APPLICATION_NAME);
+    dst = iniparser_getstring(LptPatchSettings, "target:application_path", DEFAULT_APPLICATION_NAME);
 
     size_t converted;
 
@@ -494,36 +503,7 @@ bool GetPatchDllPath(char* path, size_t max_len)
     
     return PathFileExistsA(path) == TRUE;
 }
-#if 0
-bool InjectLibrary(HANDLE process, char* lib_path)
-{
-    size_t lib_path_size = strlen(lib_path) + 1;
-    void* remotePatchDllPath;
 
-    remotePatchDllPath = VirtualAllocEx(process, NULL, lib_path_size, MEM_COMMIT, PAGE_READWRITE);
-    if (!remotePatchDllPath)
-    {
-        return false;
-    }
-
-    DWORD written;
-    if (!WriteProcessMemory(process, remotePatchDllPath, lib_path, lib_path_size, &written) || written != lib_path_size)
-    {
-        return false;
-    }
-
-    DWORD patcher_thread_id;
-    HANDLE patcher_thread;
-    patcher_thread = CreateRemoteThread(process, NULL, 0, (LPTHREAD_START_ROUTINE)LoadLibraryA, (LPVOID)remotePatchDllPath, 0, &patcher_thread_id);
-    if (patcher_thread == NULL)
-    {
-        return false;
-    }
-    CloseHandle(patcher_thread);
-
-    return true;
-}
-#endif
 noreturn void Die(wchar_t* reason, bool isSystemFail)
 {
     DWORD error;
@@ -561,18 +541,20 @@ static void LoadCreateOrUpdateDefaultIni()
     defaults[] =
     {
         {"target", NULL},
-        {"target:application_path", APPLICATION_NAME},
+        {"target:application_path", DEFAULT_APPLICATION_NAME},
 
         {"mode", NULL},
-        {"mode:patch_winio_load", "True"},
-        {"mode:emulate_lpt_in_registry", "True"},
         {"mode:use_mempatch", "True"},
-        {"mode:lpt_base_address", "0x378"},
-        {"mode:lpt_mode", "EPP"},
+        {"mode:patch_winio_load", "True"},          //TODO: implement
+        {"mode:emulate_lpt_in_registry", "True"},   //TODO: implement
+        {"mode:lpt_base_address", "0x378"},         //TODO: implement
+        {"mode:lpt_mode", "EPP"},                   //TODO: implement
 
         {"debug", NULL},
-        {"debug:log_calls", "False"},
-        {"debug:log_file_name", "calls.log"},
+        {"debug:log_enabled", "False"},
+        {"debug:log_file_intercepted_calls", "calls.log"},
+        {"debug:log_file_patched_areas", "patches.log"},
+        {"debug:log_file_errors", "errors.log"},
     };
 
     LptPatchSettings = iniparser_load(SETTINGS_FILE_NAME);
@@ -617,25 +599,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     
     LoadCreateOrUpdateDefaultIni();
 
+    MemoryPatchMode = iniparser_getboolean(LptPatchSettings, "mode:use_mempatch", true);
+    EnableLogging = iniparser_getboolean(LptPatchSettings, "debug:log_enabled", true);
+    PatchesLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_patched_areas", NULL);
+    CallsLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_intercepted_calls", NULL);
+    ErrorsLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_errors", NULL);
+
     if (sizeof(void*) != 4)
     {
         Die(L"Only x86 support! No 64-bit mode!", false);
     }
 
-#if !defined(MEMORY_PATCH_MODE)
-    UsbLpt = UsbLpt_OpenAuto();
-    if (!UsbLpt)
+    if (MemoryPatchMode)
     {
-        Die(L"Can't open USBLPT", false);
+        MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
     }
+    else
+    {
+        UsbLpt = UsbLpt_OpenAuto();
+        if (!UsbLpt)
+        {
+            Die(L"Can't open USBLPT", false);
+        }
 
-    if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
-    {
-        Die(L"Can't configure USBLPT", false);
+        if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
+        {
+            Die(L"Can't configure USBLPT", false);
+        }
     }
-#else
-    MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
-#endif
 
     if (!GetTargetExePath(appPath, sizeof(appPath) / sizeof(*appPath)))
     {
@@ -647,21 +638,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Die(L"patch dll file can not be located", false);
     }
 
-#if 0
-    if (!CreateProcess(appPath, NULL, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi))
-    {
-        Die(L"error creating process", true);
-    }
-    if (!InjectLibrary(pi.hProcess, patchDllPath))
-    {
-        Die(L"error injecting patch dll", true);
-    }
-#else
     if (!DetourCreateProcessWithDllExW(appPath, NULL, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi, patchDllPath, NULL))
     {
         Die(L"error creating process with injected dll patch", true);
     }
-#endif
+
     CloseHandle(pi.hThread);
 
     DEBUG_EVENT de;
@@ -691,16 +672,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 {
                     case EXCEPTION_PRIV_INSTRUCTION:
                     {
-#if defined(MEMORY_PATCH_MODE)
-                        if (!WritePort8 || !ReadPort8)
+                        if (MemoryPatchMode)
                         {
-                            //load addresses of WriteReg8/ReadReg8 inside dst process. only now, when process really loaded.
-                            if (!FindExternalProcessDllFnAddresses(patchDllPath, pi.hProcess, 2, "ReadPort8", &ReadPort8, "WritePort8", &WritePort8))
+                            if (!WritePort8 || !ReadPort8)
                             {
-                                Die(L"error loading addresses of patch dll io functions", false);
+                                //load addresses of WriteReg8/ReadReg8 inside dst process. only now, when process really loaded.
+                                if (!FindExternalProcessDllFnAddresses(patchDllPath, pi.hProcess, 2, "ReadPort8", &ReadPort8, "WritePort8", &WritePort8))
+                                {
+                                    Die(L"error loading addresses of patch dll io functions", false);
+                                }
                             }
                         }
-#endif
                         HANDLE thread = OpenThread(THREAD_ALL_ACCESS, FALSE, de.dwThreadId);
                         if (!process_io_exception(pi.hProcess, thread, de.u.Exception.ExceptionRecord.ExceptionAddress))
                         {
@@ -739,9 +721,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     iniparser_freedict(LptPatchSettings);
 
 
-#if !defined(MEMORY_PATCH_MODE)
-    UsbLpt_Close(UsbLpt);
-#endif
+    if (!MemoryPatchMode)
+    {
+        UsbLpt_Close(UsbLpt);
+    }
 
     return 0;
 }

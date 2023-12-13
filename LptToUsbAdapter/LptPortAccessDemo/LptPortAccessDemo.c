@@ -53,7 +53,7 @@ double GetSecMsecTime()
 }
 
 #endif
-
+//#define NOIO
 #ifdef NOIO
 #undef Inb
 #undef Outb

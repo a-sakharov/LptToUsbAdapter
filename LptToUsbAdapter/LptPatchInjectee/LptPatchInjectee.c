@@ -22,6 +22,8 @@ static RegQueryValueExA_t TrueRegQueryValueExA;
 
 static HANDLE WinIoHookHandle;
 
+noreturn void Die(wchar_t* reason, bool isSystemFail);
+
 HANDLE WINAPI CreateFileA_filter(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
     bool winIoAccess = false;
