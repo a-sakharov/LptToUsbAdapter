@@ -57,13 +57,37 @@ void* ReadPort8;
 
 USBLPT UsbLpt;
 
-dictionary* LptPatchSettings;
+struct LptPatchSettings_t
+{
+    struct
+    {
+        char* application_path;
 
-const char* CallsLogFile;
-const char* PatchesLogFile;
-const char* ErrorsLogFile;
-bool EnableLogging;
-bool MemoryPatchMode;
+    }target;
+
+    struct
+    {
+        bool use_mempatch;
+        uint16_t* bypassPorts;
+        uint16_t bypassPortsCount;
+        bool patch_winio_load;
+        bool emulate_lpt_in_registry;
+    }behavior;
+
+    struct
+    {
+        uint16_t base_address;
+        char* mode;
+    }lpt;
+
+    struct
+    {
+        bool enabled;
+        char* file_intercepted_calls;
+        char* file_patched_areas;
+        char* file_errors;
+    }logging;
+}Settings = { 0 };
 
 void LogLine(const char* file, char* line)
 {
@@ -254,11 +278,11 @@ bool DecodeIoInstruction(uint8_t *inst_buf, size_t inst_len, uint32_t edx, uint1
     else CHECK_OPERATION_1B(0xEF, 1, edx & 0xFFFF, 32, true)        //OUT 32 DX
     else
     {
-        if (EnableLogging)
+        if (Settings.logging.enabled)
         {
             char buffer[128];
             snprintf(buffer, sizeof(buffer), "Undefined instruction: %.2hhX %.2hhX %.2hhX", inst_buf[0], inst_buf[1], inst_buf[2]);
-            LogLine(ErrorsLogFile, buffer);
+            LogLine(Settings.logging.file_errors, buffer);
         }
         return false;
     }
@@ -273,9 +297,9 @@ bool DecodeIoInstruction(uint8_t *inst_buf, size_t inst_len, uint32_t edx, uint1
 
 bool PatchIoInstruction(HANDLE process, uint8_t* inst_buf, size_t inst_len, uint8_t io_size_bits, uint8_t instruction_size_bytes, void *instruction_address, bool is_out_instruction)
 {
-    if (EnableLogging)
+    if (Settings.logging.enabled)
     {
-        PrintInstructionDumpAt(PatchesLogFile, process, "pre-patched IO call area", instruction_address, 32);
+        PrintInstructionDumpAt(Settings.logging.file_patched_areas, process, "pre-patched IO call area", instruction_address, 32);
     }
 
     if (io_size_bits != 8 || instruction_size_bytes != 1) //only 8 bit io, only port address in DX, only LPT1
@@ -352,10 +376,10 @@ bool PatchIoInstruction(HANDLE process, uint8_t* inst_buf, size_t inst_len, uint
         return false;
     }
 
-    if (EnableLogging)
+    if (Settings.logging.enabled)
     {
-        PrintInstructionDumpAt(PatchesLogFile, process, "patched IO call area", instruction_address, 32);
-        PrintInstructionDumpAt(PatchesLogFile, process, "worker area", remoteInoutWorker, 32);
+        PrintInstructionDumpAt(Settings.logging.file_patched_areas, process, "patched IO call area", instruction_address, 32);
+        PrintInstructionDumpAt(Settings.logging.file_patched_areas, process, "worker area", remoteInoutWorker, 32);
     }
 
     return true;
@@ -372,9 +396,6 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
     uint32_t eax = 0; //ExceptionInfo->ContextRecord->Eax
     CONTEXT threadContext = { .ContextFlags = WOW64_CONTEXT_INTEGER | WOW64_CONTEXT_CONTROL };
     bool bypassMode = false;
-    uint16_t bypassPorts[] = {
-        0x77A
-    };
     size_t i;
     uint32_t data = 0; //data to write
 
@@ -397,15 +418,15 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
         return false;
     }
 
-    if (MemoryPatchMode)
+    if (Settings.behavior.use_mempatch)
     {
         PatchIoInstruction(process, instr_ptr, sizeof(instr_ptr), io_size, instruction_sz, exception_address, out_direction);
     }
     else
     {
-        for (i = 0; i < sizeof(bypassPorts) / sizeof(*bypassPorts); ++i)
+        for (i = 0; i < Settings.behavior.bypassPortsCount; ++i)
         {
-            if (port == bypassPorts[i])
+            if (port == Settings.behavior.bypassPorts[i])
             {
                 bypassMode = true;
                 break;
@@ -414,7 +435,7 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
 
         if (!bypassMode)
         {
-            if (io_size != 8 || port < 0x378 || port > 0x37c) //only 8 bit io, only LPT1
+            if (io_size != 8 || port < Settings.lpt.base_address || port >(Settings.lpt.base_address + 4)) //only 8 bit io
             {
                 return false;
             }
@@ -434,7 +455,7 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
                     data = eax & 0xFF;
                 }
 
-                if (!UsbLpt_SetPort8(UsbLpt, port - 0x378, (uint8_t)data))
+                if (!UsbLpt_SetPort8(UsbLpt, port - Settings.lpt.base_address, (uint8_t)data))
                 {
                     return false;
                 }
@@ -442,7 +463,7 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
             else
             {
                 uint8_t temp;
-                if (!UsbLpt_GetPort8(UsbLpt, port - 0x378, &temp))
+                if (!UsbLpt_GetPort8(UsbLpt, port - Settings.lpt.base_address, &temp))
                 {
                     return false;
                 }
@@ -471,7 +492,7 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
             return false;
         }
 
-        if (EnableLogging)
+        if (Settings.logging.enabled)
         {
             char buffer[128];
             if (out_direction)
@@ -483,7 +504,7 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
                 snprintf(buffer, sizeof(buffer), "%p IN.%c 0x%X ; got %X", exception_address, io_size == 8 ? 'b' : io_size == 16 ? 'w' : 'd', port, data);
             }
 
-            LogLine(CallsLogFile, buffer);
+            LogLine(Settings.logging.file_intercepted_calls, buffer);
         }
 
     }
@@ -493,13 +514,9 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
 
 bool GetTargetExePath(wchar_t* path, size_t max_len)
 {
-    const char* dst;
-
-    dst = iniparser_getstring(LptPatchSettings, "target:application_path", DEFAULT_APPLICATION_NAME);
-
     size_t converted;
 
-    if (mbstowcs_s(&converted, path, max_len, dst, strlen(dst)) != 0)
+    if (mbstowcs_s(&converted, path, max_len, Settings.target.application_path, strlen(Settings.target.application_path)) != 0)
     {
         return false;
     }
@@ -551,8 +568,19 @@ noreturn void Die(wchar_t* reason, bool isSystemFail)
     exit(-1);
 }
 
-static void LoadCreateOrUpdateDefaultIni()
+char* strdup_die(const char* str)
 {
+    char* r = _strdup(str);
+    if (!r)
+    {
+        Die(L"Error: cant allocate memory for string", true);
+    }
+    return r;
+}
+
+static void LoadSettings()
+{
+    dictionary* lpt_patch_settings;
     struct
     {
         char* key;
@@ -563,28 +591,31 @@ static void LoadCreateOrUpdateDefaultIni()
         {"target", NULL},
         {"target:application_path", DEFAULT_APPLICATION_NAME},
 
-        {"mode", NULL},
-        {"mode:use_mempatch", "True"},
-        {"mode:patch_winio_load", "True"},          //TODO: implement
-        {"mode:emulate_lpt_in_registry", "True"},   //TODO: implement
-        {"mode:lpt_base_address", "0x378"},         //TODO: implement
-        {"mode:lpt_mode", "EPP"},                   //TODO: implement
+        {"behavior", NULL},
+        {"behavior:use_mempatch", "True"},
+        {"behavior:ignore_ports", "0x77A 0x2F8 0x2F9 0x2FA 0x2FB 0x2FC 0x2FD 0x2FE 0x2FF"},
+        {"behavior:patch_winio_load", "True"},          //TODO: implement
+        {"behavior:emulate_lpt_in_registry", "True"},   //TODO: implement
 
-        {"debug", NULL},
-        {"debug:log_enabled", "False"},
-        {"debug:log_file_intercepted_calls", "calls.log"},
-        {"debug:log_file_patched_areas", "patches.log"},
-        {"debug:log_file_errors", "errors.log"},
+        {"lpt", NULL},
+        {"lpt:base_address", "0x378"},
+        {"lpt:mode", "EPP"}, 
+
+        {"logging", NULL},
+        {"logging:enabled", "False"},
+        {"logging:file_intercepted_calls", "calls.log"},
+        {"logging:file_patched_areas", "patches.log"},
+        {"logging:file_errors", "errors.log"},
     };
     bool update_required = false;
 
-    LptPatchSettings = iniparser_load(SETTINGS_FILE_NAME);
-    if (!LptPatchSettings)
+    lpt_patch_settings = iniparser_load(SETTINGS_FILE_NAME);
+    if (!lpt_patch_settings)
     {
-        LptPatchSettings = dictionary_new(0);
+        lpt_patch_settings = dictionary_new(0);
     }
 
-    if (!LptPatchSettings)
+    if (!lpt_patch_settings)
     {
         Die(L"Error create/load default settings", false);
     }
@@ -592,9 +623,9 @@ static void LoadCreateOrUpdateDefaultIni()
     size_t i;
     for (i = 0; i < sizeof(defaults) / sizeof(*defaults); ++i)
     {
-        if (!iniparser_find_entry(LptPatchSettings, defaults[i].key))
+        if (!iniparser_find_entry(lpt_patch_settings, defaults[i].key))
         {
-            iniparser_set(LptPatchSettings, defaults[i].key, defaults[i].default_value);
+            iniparser_set(lpt_patch_settings, defaults[i].key, defaults[i].default_value);
             update_required = true;
         }
     }
@@ -604,7 +635,7 @@ static void LoadCreateOrUpdateDefaultIni()
         FILE* f;
         if (fopen_s(&f, SETTINGS_FILE_NAME, "wt") == 0)
         {
-            iniparser_dump_ini(LptPatchSettings, f);
+            iniparser_dump_ini(lpt_patch_settings, f);
             fclose(f);
         }
         else
@@ -612,6 +643,40 @@ static void LoadCreateOrUpdateDefaultIni()
             Die(L"Error save default settings", true);
         }
     }
+
+    Settings.target.application_path = strdup_die(iniparser_getstring(lpt_patch_settings, "target:application_path", ""));
+
+    Settings.behavior.use_mempatch = iniparser_getboolean(lpt_patch_settings, "behavior:use_mempatch", true);
+    const char* ignored_ports = iniparser_getstring(lpt_patch_settings, "behavior:ignore_ports", NULL);
+    Settings.behavior.patch_winio_load = iniparser_getboolean(lpt_patch_settings, "behavior:patch_winio_load", true);
+    Settings.behavior.emulate_lpt_in_registry = iniparser_getboolean(lpt_patch_settings, "behavior:emulate_lpt_in_registry", true);
+
+    Settings.lpt.base_address = iniparser_getint(lpt_patch_settings, "lpt:base_address", 0x378);
+    Settings.lpt.mode = strdup_die(iniparser_getstring(lpt_patch_settings, "lpt:mode", NULL));
+
+    Settings.logging.enabled = iniparser_getboolean(lpt_patch_settings, "logging:enabled", true);
+    Settings.logging.file_intercepted_calls = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_intercepted_calls", NULL));
+    Settings.logging.file_patched_areas = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_patched_areas", NULL));
+    Settings.logging.file_errors = strdup_die(iniparser_getstring(lpt_patch_settings, "logging:file_errors", NULL));
+
+    char* strtok_ctx = NULL;
+    char* port;
+    port = strtok_s((char*)ignored_ports, " ,", &strtok_ctx);
+    while (port)
+    {
+        Settings.behavior.bypassPortsCount++;
+        void* tmp = realloc(Settings.behavior.bypassPorts, sizeof(*Settings.behavior.bypassPorts) * Settings.behavior.bypassPortsCount);
+        if (!tmp)
+        {
+            Die(L"Error memory allocation while reading bypass ports", true);
+        }
+        Settings.behavior.bypassPorts = tmp;
+        Settings.behavior.bypassPorts[Settings.behavior.bypassPortsCount - 1] = (uint16_t)strtoul(port, NULL, 0);
+
+        port = strtok_s(NULL, " ,", &strtok_ctx);
+    }
+
+    iniparser_freedict(lpt_patch_settings);
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
@@ -622,20 +687,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     wchar_t appPath[MAX_PATH];
     char patchDllPath[MAX_PATH];
 
-    LoadCreateOrUpdateDefaultIni();
-
-    MemoryPatchMode = iniparser_getboolean(LptPatchSettings, "mode:use_mempatch", true);
-    EnableLogging = iniparser_getboolean(LptPatchSettings, "debug:log_enabled", true);
-    PatchesLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_patched_areas", NULL);
-    CallsLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_intercepted_calls", NULL);
-    ErrorsLogFile = iniparser_getstring(LptPatchSettings, "debug:log_file_errors", NULL);
+    LoadSettings();
 
     if (sizeof(void*) != 4)
     {
         Die(L"Only x86 support! No 64-bit mode!", false);
     }
 
-    if (MemoryPatchMode)
+    if (Settings.behavior.use_mempatch)
     {
         MessageBoxA(NULL, "Highly experimental mode!\r\nUse for your own risk!", "Warning", MB_ICONWARNING);
     }
@@ -647,7 +706,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             Die(L"Can't open USBLPT", false);
         }
 
-        if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
+        USBLPT_MODE m;
+        if (!_stricmp(Settings.lpt.mode, "EPP"))
+        {
+            m = LPT_MODE_EPP;
+        }
+        else if (!_stricmp(Settings.lpt.mode, "LEGACY"))
+        {
+            m = LPT_MODE_LEGACY;
+        }
+        else if (!_stricmp(Settings.lpt.mode, "PS/2") || !_stricmp(Settings.lpt.mode, "PS2"))
+        {
+            m = LPT_MODE_PS2;
+        }
+        else
+        {
+            Die(L"Invalid lpt mode set in configuration file", false);
+        }
+
+        if (!UsbLpt_SetMode(UsbLpt, m))
         {
             Die(L"Can't configure USBLPT", false);
         }
@@ -697,7 +774,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             {
             case EXCEPTION_PRIV_INSTRUCTION:
             {
-                if (MemoryPatchMode)
+                if (Settings.behavior.use_mempatch)
                 {
                     if (!WritePort8 || !ReadPort8)
                     {
@@ -743,10 +820,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     CloseHandle(pi.hProcess);
 
-    iniparser_freedict(LptPatchSettings);
-
-
-    if (!MemoryPatchMode)
+    if (!Settings.behavior.use_mempatch)
     {
         UsbLpt_Close(UsbLpt);
     }
