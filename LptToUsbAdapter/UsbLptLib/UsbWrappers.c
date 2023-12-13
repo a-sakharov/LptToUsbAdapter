@@ -221,7 +221,7 @@ static PUSB_DESCRIPTOR_REQUEST GetConfigDescriptor(HANDLE hHubDevice, ULONG Conn
     ULONG   nBytes = 0;
     ULONG   nBytesReturned = 0;
 
-    UCHAR   configDescReqBuf[sizeof(USB_DESCRIPTOR_REQUEST) + sizeof(USB_CONFIGURATION_DESCRIPTOR)];
+    UCHAR configDescReqBuf[sizeof(USB_DESCRIPTOR_REQUEST) + sizeof(USB_CONFIGURATION_DESCRIPTOR)];
 
     PUSB_DESCRIPTOR_REQUEST         configDescReq = NULL;
     PUSB_CONFIGURATION_DESCRIPTOR   configDesc = NULL;
@@ -727,7 +727,7 @@ bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, 
 
     return true;
 }
-bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t* size)
+bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t* size_max, uint16_t size_min)
 {
     LONG transferred;
     WINUSB_SETUP_PACKET packet =
@@ -736,17 +736,17 @@ bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, u
         .Request = request,
         .Value = value,
         .Index = index,
-        .Length = *size,
+        .Length = *size_max,
     };
 
-    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, *size, &transferred, NULL))
+    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, *size_max, &transferred, NULL))
     {
         return false;
     }
 
-    if (transferred != *size)
+    if (transferred < size_min)
     {
-        return false;//maybe not?
+        return false;
     }
 
     return true;

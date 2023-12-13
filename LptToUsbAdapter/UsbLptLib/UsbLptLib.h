@@ -25,7 +25,7 @@ typedef enum USBLPT_REG_t
 #pragma pack(push, 1)
 typedef struct USBLPT_version_t
 {
-    uint8_t revision;
+    uint8_t revision; //revision count from 0, while version count from 1. so, revision 0 == version 1 and so on
     struct
     {
         uint8_t day;
@@ -39,6 +39,26 @@ typedef struct USBLPT_version_t
         uint8_t minute;
         uint8_t second;
     } build_time;
+
+    union
+    {
+        struct
+        {
+            uint8_t dummy[32];
+        } v1;
+
+        struct
+        {
+            uint8_t dummy[32];
+        } v2;
+
+        struct
+        {
+            uint32_t chip_id;
+            uint8_t uuid[12];
+            uint8_t dummy[16];
+        } v3;
+    };
 } USBLPT_version;
 #pragma pack(pop)
 

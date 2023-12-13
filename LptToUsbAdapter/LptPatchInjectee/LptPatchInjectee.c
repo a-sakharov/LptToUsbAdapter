@@ -234,6 +234,11 @@ void OpenUsbLpt()
     {
         Die(L"Can't open USBLPT", false);
     }
+
+    if (!UsbLpt_SetMode(UsbLpt, LPT_MODE_EPP))
+    {
+        Die(L"Can't configure USBLPT", false);
+    }
 }
 
 __declspec(dllexport) void _cdecl WritePort8(uint16_t port, uint8_t data)

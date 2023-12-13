@@ -10,6 +10,7 @@
 #include <psapi.h>
 #include <stdarg.h>
 #include "ld32.h"
+#include <iniparser.h>
 
     
 #define FILL_INSTRUCTION_DATA(_instruction_sz, _port, _io_size, _out_direction) \
@@ -98,7 +99,8 @@ void PrintInstructionDumpAt(HANDLE process, char* prefix, PVOID address, size_t 
 #endif
 
 USBLPT UsbLpt;
-//#define MEMORY_PATCH_MODE
+dictionary* LptPatchSettings;
+#define MEMORY_PATCH_MODE
 
 #if defined(MEMORY_PATCH_MODE)
 #pragma pack(push, 1)
@@ -120,6 +122,7 @@ extern void* out_byte_fn;
 extern uint32_t out_byte_fn_size;
 extern void* in_byte_fn;
 extern uint32_t in_byte_fn_size;
+
 
 void* WritePort8;
 void* ReadPort8;
@@ -455,12 +458,19 @@ bool process_io_exception(HANDLE process, HANDLE thread, void* exception_address
 }
 
 #define PATCH_DLL_NAME "LptPatchInjectee32.dll"
-//#define APPLICATION_NAME L"Orange.exe"
-#define APPLICATION_NAME L"LptPortAccessDemo.exe"
+#define APPLICATION_NAME "Orange.exe"
+//#define APPLICATION_NAME "LptPortAccessDemo.exe"
+#define SETTINGS_FILE_NAME "LptPatch.ini"
 
 bool GetTargetExePath(wchar_t* path, size_t max_len)
 {
-    if (wcscpy_s(path, max_len, APPLICATION_NAME) != 0)
+    char* dst;
+
+    dst = iniparser_getstring(LptPatchSettings, "target:application_path", APPLICATION_NAME);
+
+    size_t converted;
+
+    if (mbstowcs_s(&converted, path, max_len, dst, strlen(dst)) != 0)
     {
         return false;
     }
@@ -541,6 +551,61 @@ noreturn void Die(wchar_t* reason, bool isSystemFail)
     exit(-1);
 }
 
+static void LoadCreateOrUpdateDefaultIni()
+{
+    struct
+    {
+        char* key;
+        char* default_value;
+    } 
+    defaults[] =
+    {
+        {"target", NULL},
+        {"target:application_path", APPLICATION_NAME},
+
+        {"mode", NULL},
+        {"mode:patch_winio_load", "True"},
+        {"mode:emulate_lpt_in_registry", "True"},
+        {"mode:use_mempatch", "True"},
+        {"mode:lpt_base_address", "0x378"},
+        {"mode:lpt_mode", "EPP"},
+
+        {"debug", NULL},
+        {"debug:log_calls", "False"},
+        {"debug:log_file_name", "calls.log"},
+    };
+
+    LptPatchSettings = iniparser_load(SETTINGS_FILE_NAME);
+    if (!LptPatchSettings)
+    {
+        LptPatchSettings = dictionary_new(0);
+    }
+
+    if (!LptPatchSettings)
+    {
+        Die(L"Error create/load default settings", false);
+    }
+
+    size_t i;
+    for (i = 0; i < sizeof(defaults)/sizeof(*defaults); ++i)
+    {
+        if (!iniparser_find_entry(LptPatchSettings, defaults[i].key))
+        {
+            iniparser_set(LptPatchSettings, defaults[i].key, defaults[i].default_value);
+        }
+    }
+
+    FILE* f;
+    if (fopen_s(&f, SETTINGS_FILE_NAME, "wt") == 0)
+    {
+        iniparser_dump_ini(LptPatchSettings, f);
+        fclose(f);
+    }
+    else
+    {
+        Die(L"Error save default settings", true);
+    }
+}
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
@@ -549,6 +614,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     PROCESS_INFORMATION pi;
     wchar_t appPath[MAX_PATH];
     char patchDllPath[MAX_PATH];
+    
+    LoadCreateOrUpdateDefaultIni();
 
     if (sizeof(void*) != 4)
     {
@@ -668,6 +735,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     CloseHandle(pi.hProcess);
+
+    iniparser_freedict(LptPatchSettings);
 
 
 #if !defined(MEMORY_PATCH_MODE)

@@ -40,7 +40,7 @@ extern "C" {
     bool USBWRAP_OpenDeviceByPath(wchar_t* path, USBHANDLE* handle);
     bool USBWRAP_CloseDevice(USBHANDLE handle);
     
-    bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t* size);
+    bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t* size_max, uint16_t size_min);
     bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t size);
 
 #if defined __cplusplus

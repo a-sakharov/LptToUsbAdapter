@@ -222,7 +222,14 @@ bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver)
 {
     uint16_t size = sizeof(USBLPT_version);
 
-    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size))
+    memset(ver, 0, sizeof(USBLPT_version));
+
+    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size, size - 32))
+    {
+        return false;
+    }
+
+    if (size != sizeof(USBLPT_version) && size != sizeof(USBLPT_version)-32)
     {
         return false;
     }
@@ -244,7 +251,7 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
 {
     uint16_t iosz = 1;
 
-    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &iosz))
+    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &iosz, iosz))
     {
         return false;
     }
@@ -338,19 +345,19 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
 
     WindowParams.SubmitBtnId = 77;
 
-    WindowParams.MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
+    WindowParams.MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 450, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
     if (!WindowParams.MainWindow)
     {
         return MAXSIZE_T;
     }
 
-    WindowParams.ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 280, 190, WindowParams.MainWindow, NULL, GetModuleHandle(NULL), NULL);
+    WindowParams.ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 410, 190, WindowParams.MainWindow, NULL, GetModuleHandle(NULL), NULL);
     if (!WindowParams.ListBox)
     {
         return MAXSIZE_T;
     }
 
-    WindowParams.SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 280, 25, WindowParams.MainWindow, (HMENU)WindowParams.SubmitBtnId, GetModuleHandle(NULL), NULL);
+    WindowParams.SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 410, 25, WindowParams.MainWindow, (HMENU)WindowParams.SubmitBtnId, GetModuleHandle(NULL), NULL);
     if (!WindowParams.SubmitButton)
     {
         return MAXSIZE_T;
@@ -359,9 +366,11 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
     for (i = 0; i < devices_count; ++i)
     {
         wchar_t label[128];
-        swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.revision, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
+        swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.revision + 1, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
         SendMessage(WindowParams.ListBox, CB_ADDSTRING, 0, (LPARAM)label);
     }
+
+    SendMessage(WindowParams.ListBox, CB_SETCURSEL, 0, 0);
 
     ShowWindow(WindowParams.SubmitButton, SW_SHOW);
     ShowWindow(WindowParams.ListBox, SW_SHOW);
