@@ -593,7 +593,7 @@ static void LoadSettings()
 
         {"behavior", NULL},
         {"behavior:use_mempatch", "True"},
-        {"behavior:ignore_ports", "0x77A 0x2F8 0x2F9 0x2FA 0x2FB 0x2FC 0x2FD 0x2FE 0x2FF"},
+        {"behavior:bypass_ports", "0x77A 0x2F8 0x2F9 0x2FA 0x2FB 0x2FC 0x2FD 0x2FE 0x2FF"},
         {"behavior:patch_winio_load", "True"},          //TODO: implement
         {"behavior:emulate_lpt_in_registry", "True"},   //TODO: implement
 
