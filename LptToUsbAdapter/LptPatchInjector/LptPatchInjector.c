@@ -68,8 +68,8 @@ struct LptPatchSettings_t
     struct
     {
         bool use_mempatch;
-        uint16_t* bypassPorts;
-        uint16_t bypassPortsCount;
+        uint16_t* bypass_ports;
+        uint16_t bypass_ports_cnt;
         bool patch_winio_load;
         bool emulate_lpt_in_registry;
     }behavior;
@@ -424,9 +424,9 @@ bool ProcessIoException(HANDLE process, HANDLE thread, void* exception_address)
     }
     else
     {
-        for (i = 0; i < Settings.behavior.bypassPortsCount; ++i)
+        for (i = 0; i < Settings.behavior.bypass_ports_cnt; ++i)
         {
-            if (port == Settings.behavior.bypassPorts[i])
+            if (port == Settings.behavior.bypass_ports[i])
             {
                 bypassMode = true;
                 break;
@@ -647,7 +647,7 @@ static void LoadSettings()
     Settings.target.application_path = strdup_die(iniparser_getstring(lpt_patch_settings, "target:application_path", ""));
 
     Settings.behavior.use_mempatch = iniparser_getboolean(lpt_patch_settings, "behavior:use_mempatch", true);
-    const char* ignored_ports = iniparser_getstring(lpt_patch_settings, "behavior:ignore_ports", NULL);
+    const char* bypass_ports = iniparser_getstring(lpt_patch_settings, "behavior:bypass_ports", NULL);
     Settings.behavior.patch_winio_load = iniparser_getboolean(lpt_patch_settings, "behavior:patch_winio_load", true);
     Settings.behavior.emulate_lpt_in_registry = iniparser_getboolean(lpt_patch_settings, "behavior:emulate_lpt_in_registry", true);
 
@@ -661,17 +661,17 @@ static void LoadSettings()
 
     char* strtok_ctx = NULL;
     char* port;
-    port = strtok_s((char*)ignored_ports, " ,", &strtok_ctx);
+    port = strtok_s((char*)bypass_ports, " ,", &strtok_ctx);
     while (port)
     {
-        Settings.behavior.bypassPortsCount++;
-        void* tmp = realloc(Settings.behavior.bypassPorts, sizeof(*Settings.behavior.bypassPorts) * Settings.behavior.bypassPortsCount);
+        Settings.behavior.bypass_ports_cnt++;
+        void* tmp = realloc(Settings.behavior.bypass_ports, sizeof(*Settings.behavior.bypass_ports) * Settings.behavior.bypass_ports_cnt);
         if (!tmp)
         {
             Die(L"Error memory allocation while reading bypass ports", true);
         }
-        Settings.behavior.bypassPorts = tmp;
-        Settings.behavior.bypassPorts[Settings.behavior.bypassPortsCount - 1] = (uint16_t)strtoul(port, NULL, 0);
+        Settings.behavior.bypass_ports = tmp;
+        Settings.behavior.bypass_ports[Settings.behavior.bypass_ports_cnt - 1] = (uint16_t)strtoul(port, NULL, 0);
 
         port = strtok_s(NULL, " ,", &strtok_ctx);
     }
