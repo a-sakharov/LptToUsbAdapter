@@ -1,10 +1,14 @@
 #include "UsbLptLib.h"
-#include <Windows.h>
-#include <strsafe.h>
-#include <tchar.h>
-#include <crtdbg.h>
 #include "UsbWrappers.h"
+#include <stdlib.h>
+#include <wchar.h>
+#include <string.h>
 
+#ifdef _WIN32
+#include <Windows.h>
+#else
+
+#endif
 
 #define USBLPT_VID 0x1209
 #define USBLPT_PID 0x4153
@@ -13,6 +17,7 @@ struct USBLPT_t
 {
     USBHANDLE usb_handles;
     USBLPT_version version;
+    bool no_special_endpoint;
 };
 
 typedef enum USBLPT_COMMAND_t
@@ -20,66 +25,241 @@ typedef enum USBLPT_COMMAND_t
     USBLPT_GET_VERSION = 0x07,
     USBLPT_SET_MODE = 0x08,
     USBLPT_SET_REG = 0x09,
-    USBLPT_GET_REG = 0x0a
+    USBLPT_GET_REG = 0x0a,
+
+    USBLPT_DFU_ERASE = 0x80,
+    USBLPT_DFU_LDBLOCK = 0x81,
+    USBLPT_DFU_FINALIZE = 0x82,
 } USBLPT_COMMAND;
 
+#define COMMAN_PIPE_OUT 1
+#define COMMAN_PIPE_IN  2 //0x82?
+
 #ifdef _DEBUG
+
+#ifdef _WIN32
+#define OUTPUT_WSTR(str) OutputDebugStringW(str)
+#else
+#define OUTPUT_WSTR(str) wprintf(L"%s", str)
+#endif
+
 void UsbLpt_DebugPrintUsbInfo(UsbDeviceInfo* dev)
 {
     wchar_t buf[1024];
     UsbString* us;
 
+#ifdef _WIN32
     swprintf(buf, sizeof(buf)/sizeof(*buf), L"%s\n\tVID %.4hX\n\tPID %.4hX\n\tbcdDevice %.4hX\n", 
-        dev->devicePath,
+        dev->deviceIdentifier,
         dev->vid,
         dev->pid,
         dev->bcdDevice);
-    OutputDebugStringW(buf);
+#else
+    swprintf(buf, sizeof(buf)/sizeof(*buf), L"%p\n\tVID %.4hX\n\tPID %.4hX\n\tbcdDevice %.4hX\n", 
+        dev->deviceIdentifier,
+        dev->vid,
+        dev->pid,
+        dev->bcdDevice);
+#endif
+    OUTPUT_WSTR(buf);
 
     if (dev->manufacturer)
     {
-        OutputDebugStringW(L"\tManufacturer:\n");
+        OUTPUT_WSTR(L"\tManufacturer:\n");
         us = dev->manufacturer;
         while (us)
         {
             swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
-            OutputDebugStringW(buf);
+            OUTPUT_WSTR(buf);
             us = us->next;
         }
     }
 
     if (dev->productName)
     {
-        OutputDebugStringW(L"\tProduct name:\n");
+        OUTPUT_WSTR(L"\tProduct name:\n");
         us = dev->productName;
         while (us)
         {
             swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
-            OutputDebugStringW(buf);
+            OUTPUT_WSTR(buf);
             us = us->next;
         }
     }
 
     if (dev->serial)
     {
-        OutputDebugStringW(L"\tSerial:\n");
+        OUTPUT_WSTR(L"\tSerial:\n");
         us = dev->serial;
         while (us)
         {
             swprintf(buf, sizeof(buf) / sizeof(*buf), L"\t- [%.4hX] \"%s\"\n", us->lang, us->string);
-            OutputDebugStringW(buf);
+            OUTPUT_WSTR(buf);
             us = us->next;
         }
     }
-    OutputDebugStringW(L"\n");
+    OUTPUT_WSTR(L"\n");
 }
 #endif
+
+
+static bool UsbLpt_BulkCmd(USBLPT dev, uint8_t cmd, uint8_t* data_send, size_t data_send_count, uint8_t* data_recv, size_t* data_recv_cnt)
+{
+    if (data_send)
+    {
+        if (!USBWRAP_WritePipeDefaultInterface(dev->usb_handles, COMMAN_PIPE_OUT, data_send, data_send_count))
+        {
+            return false;
+        }
+    }
+
+    if (data_recv)
+    {
+        if (!USBWRAP_ReadPipeDefaultInterface(dev->usb_handles, COMMAN_PIPE_IN, data_recv, data_recv_cnt))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool UsbLpt_DFU_EraseFlash(USBLPT dev)
+{
+    uint8_t result;
+    size_t size = 1;
+
+    if(!UsbLpt_BulkCmd(dev, USBLPT_DFU_ERASE, NULL, 0, &result, &size))
+    {
+        return false;
+    }
+
+    if (result != 1 || size != 1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool UsbLpt_DFU_SendFirmware(USBLPT dev, uint32_t address, uint8_t* data, size_t data_size)
+{
+    uint8_t* send_fw;
+    size_t send_size = 4 + data_size;
+
+    send_fw = malloc(send_size);
+    if (!send_fw)
+    {
+        return false;
+    }
+
+    memcpy(send_fw + 0, &address, sizeof(address));
+    memcpy(send_fw + 4, data, data_size);
+
+    uint8_t result;
+    size_t size = 1;
+
+    if (!UsbLpt_BulkCmd(dev, USBLPT_DFU_FINALIZE, send_fw, send_size, &result, &size))
+    {
+        free(send_fw);
+        return false;
+    }
+
+    free(send_fw);
+    if (result != 1 || size != 1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool UsbLpt_DFU_Finalize(USBLPT dev, uint32_t firmware_size, uint8_t sha512[64])
+{
+#pragma pack(push, 1)
+    struct
+    {
+        uint32_t firmware_size;
+        uint8_t sha512[64];
+    } finalize_data;
+#pragma pack(pop)
+
+    finalize_data.firmware_size = firmware_size;
+    memcpy(finalize_data.sha512, sha512, sizeof(finalize_data.sha512));
+
+    uint8_t result;
+    size_t size = 1;
+
+    if (!UsbLpt_BulkCmd(dev, USBLPT_DFU_FINALIZE, (uint8_t *) & finalize_data, sizeof(finalize_data), &result, &size))
+    {
+        return false;
+    }
+
+    if (result != 1 || size != 1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool UsbLpt_FirmwareUpdate(USBLPT dev)
+{
+    if (!(dev->version.version& 0x80))
+    {
+        return false;
+    }
+
+    if ((dev->version.version & 0x7F) == 2 && (dev->version.v3.revision == 0)) //v3r0
+    {
+        if ((dev->version.v3.chip_id & 0xFFFFFF0F) != 0x30500508) //only CH32V305RBT6
+        {
+            return false;
+        }
+
+        //erase
+        if (!UsbLpt_DFU_EraseFlash(dev))
+        {
+            return false;
+        }
+
+        uint8_t fw_block[512];
+
+        //send firmware
+        if (!UsbLpt_DFU_SendFirmware(dev, 0x00009000, fw_block, sizeof(fw_block)))
+        {
+            return false;
+        }
+
+        //finalize
+        uint8_t sha512[64] = {
+            1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,'h','e','l','l','o','!'
+        };
+        if (!UsbLpt_DFU_Finalize(dev, 0x12345678, sha512))
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+bool UsbLpt_Init()
+{
+    return USBWRAP_Init();
+}
+
+bool UsbLpt_DeInit()
+{
+    return USBWRAP_DeInit();
+}
 
 bool UsbLpt_GetList(UsbLptDevice* devices, size_t devices_max, size_t* devices_used)
 {
     UsbDeviceInfo* devlist;
     size_t devlistSize;
     size_t i;
+    UsbLptDevice device_this;
 
     *devices_used = 0;
 
@@ -100,36 +280,45 @@ bool UsbLpt_GetList(UsbLptDevice* devices, size_t devices_max, size_t* devices_u
                 continue;
             }
 
-            if(wcscmp(devlist[i].productName->string, L"Virtual EPP") || wcscmp(devlist[i].manufacturer->string, L"a.sakharov"))
+            if(wcscmp(devlist[i].manufacturer->string, L"a.sakharov"))
             {
                 continue;
             }
 
-            struct USBLPT_t temp;
-            if (!USBWRAP_OpenDeviceByPath(devlist[i].devicePath, &temp.usb_handles))
+            if (wcscmp(devlist[i].productName->string, L"Virtual EPP") && wcscmp(devlist[i].productName->string, L"Virtual EPP DFU"))
             {
                 continue;
             }
 
-            if (!UsbLpt_GetVersion(&temp, &devices[*devices_used].version))
-            {
-                USBWRAP_CloseDevice(temp.usb_handles);
-                continue;
-            }
-
-            USBWRAP_CloseDevice(temp.usb_handles);
-            
-            wcscpy_s(devices[*devices_used].location, sizeof(devices[*devices_used].location)/sizeof(*devices[*devices_used].location), devlist[i].devicePath);
+            wcsncpy(device_this.location, devlist[i].deviceIdentifier, sizeof(device_this.location) / sizeof(*device_this.location));
             if (devlist[i].serial)
             {
-                wcscpy_s(devices[*devices_used].serial, sizeof(devices[*devices_used].serial) / sizeof(*devices[*devices_used].serial), devlist[i].serial->string);
+                wcsncpy(device_this.serial, devlist[i].serial->string, sizeof(device_this.serial) / sizeof(*device_this.serial));
             }
             else
             {
-                devices[*devices_used].serial[0] = L'\0';
+                device_this.serial[0] = L'\0';
             }
 
-            (*devices_used)++;
+            USBLPT temp;
+            temp = UsbLpt_Open(&device_this);
+            if (!temp)
+            {
+                continue;
+            }
+            memcpy(&device_this.version, &temp->version, sizeof(USBLPT_version));
+
+            if (!wcscmp(devlist[i].productName->string, L"Virtual EPP DFU"))
+            {
+                UsbLpt_FirmwareUpdate(temp);
+            }
+            else
+            {
+                memcpy(&devices[*devices_used], &device_this, sizeof(device_this));
+
+                (*devices_used)++;
+            }
+            UsbLpt_Close(temp);
         }
 
         USBWRAP_DestroyUsbDevicesInfoList(devlist, devlistSize);
@@ -159,7 +348,7 @@ USBLPT UsbLpt_OpenAuto()
     {
         selected_device = UsbLpt_BuildSimpleGuiDeviceSelection(usblptdevs, usblptdevs_count);
 
-        if (selected_device == MAXSIZE_T)
+        if (selected_device == SIZE_MAX)
         {
             return NULL;
         }
@@ -196,6 +385,15 @@ USBLPT UsbLpt_Open(UsbLptDevice *dev)
         return NULL;
     }
 
+    if (result->version.version < 2)
+    {
+        result->no_special_endpoint = true;
+    }
+    else
+    {
+        result->no_special_endpoint = false;
+    }
+
     return result;
 }
 
@@ -210,48 +408,113 @@ bool UsbLpt_Close(USBLPT dev)
 
 bool UsbLpt_SetMode(USBLPT dev, USBLPT_MODE mode)
 {
-    if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_MODE, (uint16_t)mode, 0, NULL, 0))
-    {
-        return false;
-    }
+	if (dev->no_special_endpoint)
+	{
+		if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_MODE, (uint16_t)mode, 0, NULL, 0))
+		{
+			return false;
+		}
+	}
+	else
+	{
+#pragma pack(push, 1)
+		struct
+		{
+			uint8_t mode;
+		}
+		set_mode_cmd =
+		{
+			mode,
+		};
+#pragma pack(pop)
 
-    return true;
+		if (!UsbLpt_BulkCmd(dev, USBLPT_SET_MODE, (uint8_t*) & set_mode_cmd, sizeof(set_mode_cmd), NULL, NULL))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver)
 {
-    uint16_t size = sizeof(USBLPT_version);
+    size_t size = sizeof(USBLPT_version);
 
-    memset(ver, 0, sizeof(USBLPT_version));
+	memset(ver, 0, sizeof(USBLPT_version));
+	if (dev->no_special_endpoint)
+	{
+		if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size))
+		{
+			return false;
+		}
+	}
+	else
+	{
+        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_VERSION, NULL, 0, (uint8_t*)ver, &size))
+        {
+            return false;
+        }
+	}
 
-    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_VERSION, 0, 0, (uint8_t*)ver, &size, size - 32))
-    {
-        return false;
-    }
+	if (size != sizeof(USBLPT_version) && size != sizeof(USBLPT_version) - 32)
+	{
+		return false;
+	}
 
-    if (size != sizeof(USBLPT_version) && size != sizeof(USBLPT_version)-32)
-    {
-        return false;
-    }
-
-    return true;
+	return true;
 }
 
 bool UsbLpt_SetPort8(USBLPT dev, USBLPT_REG reg, uint8_t byte)
 {
-    if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_REG, (uint16_t)reg, byte, NULL, 0))
-    {
-        return false;
-    }
+	if (dev->no_special_endpoint)
+	{
+		if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_SET_REG, (uint16_t)reg, byte, NULL, 0))
+		{
+			return false;
+		}
+	}
+	else
+	{
+#pragma pack(push, 1)
+        struct
+        {
+            uint8_t reg;
+            uint8_t byte;
+        } 
+        set_port_cmd =
+        {
+            reg,
+            byte
+        };
+#pragma pack(pop)
 
-    return true;
+		if (!UsbLpt_BulkCmd(dev, USBLPT_SET_REG, (uint8_t*) & set_port_cmd, sizeof(set_port_cmd), NULL, NULL))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
 {
-    uint16_t iosz = 1;
+    size_t recv = 1;
+    if (dev->no_special_endpoint)
+    {
+        if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &recv))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_REG, NULL, 0, byte, &recv))
+        {
+            return false;
+        }
+    }
 
-    if (!USBWRAP_ReadVendorRequest(dev->usb_handles, USBLPT_GET_REG, (uint16_t)reg, 0, byte, &iosz, iosz))
+    if (recv != 1)
     {
         return false;
     }
@@ -259,6 +522,7 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
     return true;
 }
 
+#ifdef _WIN32
 /* QUICK AND DIRTY WINDOWS GUI BUILDING */
 
 struct WindowParams_t
@@ -339,7 +603,7 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
     {
         if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         {
-            return MAXSIZE_T;
+            return SIZE_MAX;
         }
     }
 
@@ -348,25 +612,25 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
     WindowParams.MainWindow = CreateWindowEx(WS_EX_LEFT | WS_EX_TOPMOST, classname, L"Select USBLPT device", WS_BORDER | WS_SYSMENU | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 450, 120, NULL, NULL, GetModuleHandle(NULL), NULL);
     if (!WindowParams.MainWindow)
     {
-        return MAXSIZE_T;
+        return SIZE_MAX;
     }
 
     WindowParams.ListBox = CreateWindowEx(WS_EX_CLIENTEDGE, L"ComboBox", NULL, WS_CHILD | WS_VSCROLL | CBS_DROPDOWNLIST | WS_TABSTOP, 10, 10, 410, 190, WindowParams.MainWindow, NULL, GetModuleHandle(NULL), NULL);
     if (!WindowParams.ListBox)
     {
-        return MAXSIZE_T;
+        return SIZE_MAX;
     }
 
     WindowParams.SubmitButton = CreateWindowEx(WS_EX_CLIENTEDGE, L"Button", L"Submit", WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON, 10, 40, 410, 25, WindowParams.MainWindow, (HMENU)WindowParams.SubmitBtnId, GetModuleHandle(NULL), NULL);
     if (!WindowParams.SubmitButton)
     {
-        return MAXSIZE_T;
+        return SIZE_MAX;
     }
 
     for (i = 0; i < devices_count; ++i)
     {
         wchar_t label[128];
-        swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.revision + 1, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
+        swprintf(label, sizeof(label)/sizeof(*label), L"[%s] v%hhu build %.4hu-%.2hhu-%.2hhu", devices[i].serial[0] == 0 ? L"NO SERIAL" : devices[i].serial, devices[i].version.version + 1, devices[i].version.build_date.year, devices[i].version.build_date.month, devices[i].version.build_date.day);
         SendMessage(WindowParams.ListBox, CB_ADDSTRING, 0, (LPARAM)label);
     }
 
@@ -392,6 +656,12 @@ size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t device
     }
     else
     {
-        return MAXSIZE_T;
+        return SIZE_MAX;
     }
 }
+#else
+size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t devices_count)
+{
+    return SIZE_MAX;
+}
+#endif

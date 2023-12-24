@@ -418,7 +418,7 @@ bool GetTargetExePath(wchar_t* path, size_t max_len)
         return false;
     }
 
-    if (PathFileExistsW(path) == TRUE)
+    if (PathFileExistsW(path) != FALSE)
     {
         return true;
     }
@@ -435,7 +435,7 @@ bool GetPatchDllPath(char* path, size_t max_len)
         return false;
     }
 
-    return PathFileExistsA(path) == TRUE;
+    return PathFileExistsA(path) != FALSE;
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
@@ -549,6 +549,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 {
                     continue_type = DBG_EXCEPTION_NOT_HANDLED;
                 }
+
+#if 0
+                static bool keepNag = true;
+                if (keepNag)
+                {
+                    int user = MessageBoxA(0, "OK to keep popping up after each interception\nCANCEL to stop popping up", "Nag window", MB_OKCANCEL);
+                    if (user == IDCANCEL)
+                    {
+                        keepNag = false;
+                    }
+                }
+#endif
             }
             break;
 

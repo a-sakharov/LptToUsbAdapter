@@ -1,16 +1,17 @@
+#include "UsbWrappers.h"
+
+#ifdef _WIN32
 #include <Windows.h>
 #include <Usbioctl.h>
 #include <cfgmgr32.h>
-#include <wchar.h>
 #include <tchar.h>
-#include <stdbool.h>
 #include <Winusb.h>
 #include <SetupAPI.h>
 #include <initguid.h>
 #include <Usbiodef.h>
 #include <Devpkey.h>
 #include <usbspec.h>
-#include "UsbWrappers.h"
+
 
 /* f18a0e88-c30c-11d0-8815-00a0c906bed8 */
 DEFINE_GUID(GUID_DEVINTERFACE_USB_HUB, 0xf18a0e88, 0xc30c, 0x11d0, 0x88, 0x15, 0x00, \
@@ -127,7 +128,7 @@ static bool DeviceIdToDevicePath(PTSTR id, PTSTR path, size_t path_len, const GU
 static bool DeviceGetPortHub(HDEVINFO deviceInfo, PSP_DEVINFO_DATA devinfo, uint16_t* port, uint16_t* hub)
 {
     DWORD requedBuffer = 0;
-    if (SetupDiGetDeviceRegistryProperty(deviceInfo, devinfo, SPDRP_LOCATION_INFORMATION, NULL, NULL, 0, &requedBuffer) != TRUE &&
+    if (SetupDiGetDeviceRegistryProperty(deviceInfo, devinfo, SPDRP_LOCATION_INFORMATION, NULL, NULL, 0, &requedBuffer) == FALSE &&
         GetLastError() != ERROR_INSUFFICIENT_BUFFER)
     {
         return false;
@@ -142,7 +143,7 @@ static bool DeviceGetPortHub(HDEVINFO deviceInfo, PSP_DEVINFO_DATA devinfo, uint
         return false;
     }
 
-    if (SetupDiGetDeviceRegistryProperty(deviceInfo, devinfo, SPDRP_LOCATION_INFORMATION, NULL, (PBYTE)devLocation, allocatedBuffer, &requedBuffer) != TRUE)
+    if (SetupDiGetDeviceRegistryProperty(deviceInfo, devinfo, SPDRP_LOCATION_INFORMATION, NULL, (PBYTE)devLocation, allocatedBuffer, &requedBuffer) == FALSE)
     {
         free(devLocation);
         return false;
@@ -525,7 +526,7 @@ static bool GatherUsbDeviceInfo(HANDLE hHubDevice, ULONG ConnectionIndex, UsbDev
     info->manufacturer = NULL;
     info->serial = NULL;
     info->productName = NULL;
-    info->devicePath = NULL;
+    info->deviceIdentifier = NULL;
     UsbString *supportedLanguagesString = NULL;
     supportedLanguagesString = GetStringDescriptor(hHubDevice, ConnectionIndex, 0, 0);
     if (!supportedLanguagesString)
@@ -575,7 +576,14 @@ static PSP_DEVICE_INTERFACE_DETAIL_DATA SetupDiGetDeviceInterfaceDetailAlloc(HDE
 }
 
 /* PUBLIC FUNCTIONS */
-
+bool USBWRAP_Init()
+{
+    return true;
+}
+bool USBWRAP_DeInit()
+{
+    return true;    
+}
 bool USBWRAP_CreateUsbDevicesInfoList(UsbDeviceInfo** devInfoList, size_t* devInfoListSize)
 {
     HDEVINFO deviceInfo;
@@ -629,7 +637,7 @@ bool USBWRAP_CreateUsbDevicesInfoList(UsbDeviceInfo** devInfoList, size_t* devIn
             {
                 result = temp;
                 memcpy(&result[length - 1], &info, sizeof(UsbDeviceInfo));
-                result[length - 1].devicePath = _tcsdup(device_detail->DevicePath);
+                result[length - 1].deviceIdentifier = _tcsdup(device_detail->DevicePath);
             }
             else
             {
@@ -658,7 +666,7 @@ bool USBWRAP_DestroyUsbDevicesInfoList(UsbDeviceInfo* devInfoList, size_t devInf
         FreeUsbString(devInfoList[i].manufacturer);
         FreeUsbString(devInfoList[i].productName);
         FreeUsbString(devInfoList[i].serial);
-        free(devInfoList[i].devicePath);
+        free(devInfoList[i].deviceIdentifier);
     }
 
     free(devInfoList);
@@ -703,19 +711,24 @@ bool USBWRAP_CloseDevice(USBHANDLE handle)
 
     return true;
 }
-bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t size)
+bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, size_t size)
 {
-    LONG transferred;
+    if (size > USHRT_MAX)
+    {
+        return false;
+    }
+
+    ULONG transferred;
     WINUSB_SETUP_PACKET packet =
     {
         .RequestType = USB_VENDOR_REQUEST | USB_PACKET_OUT,
         .Request = request,
         .Value = value,
         .Index = index,
-        .Length = size,
+        .Length = (uint16_t)size,
     };
 
-    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, size, &transferred, NULL))
+    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, (ULONG)size, &transferred, NULL))
     {
         return false;
     }
@@ -727,8 +740,13 @@ bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, 
 
     return true;
 }
-bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, uint16_t* size_max, uint16_t size_min)
+bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, size_t* size)
 {
+    if (*size > USHRT_MAX)
+    {
+        return false;
+    }
+
     LONG transferred;
     WINUSB_SETUP_PACKET packet =
     {
@@ -736,18 +754,151 @@ bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, u
         .Request = request,
         .Value = value,
         .Index = index,
-        .Length = *size_max,
+        .Length = (uint16_t)*size,
     };
 
-    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, *size_max, &transferred, NULL))
+    if (!WinUsb_ControlTransfer(dev->devWinUsbHandle, packet, data, *size, &transferred, NULL))
     {
         return false;
     }
 
-    if (transferred < size_min)
+    *size = transferred;
+
+    return true;
+}
+bool USBWRAP_WritePipeDefaultInterface(USBHANDLE dev, uint8_t pipe, uint8_t* data, size_t size)
+{
+    ULONG transferred;
+    if (!WinUsb_WritePipe(dev->devWinUsbHandle, pipe, data, size, &transferred, NULL))
+    {
+        return false;
+    }
+
+    if (transferred != size)
     {
         return false;
     }
 
     return true;
+
 }
+bool USBWRAP_ReadPipeDefaultInterface(USBHANDLE dev, uint8_t pipe, uint8_t* data, size_t*size)
+{
+    ULONG transferred;
+    if (!WinUsb_ReadPipe(dev->devWinUsbHandle, pipe, data, *size, &transferred, NULL))
+    {
+        return false;
+    }
+
+    *size = transferred;
+
+    return true;
+}
+#else
+
+#include <libusb.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+
+/* PUBLIC FUNCTIONS */
+bool USBWRAP_Init()
+{
+    return libusb_init(NULL) == 0;
+}
+bool USBWRAP_DeInit()
+{
+    libusb_exit(NULL);  
+    return true;
+}
+bool USBWRAP_CreateUsbDevicesInfoList(UsbDeviceInfo** devInfoList, size_t* devInfoListSize)
+{
+	libusb_device **devs;
+    ssize_t cnt;
+    ssize_t i;
+    struct libusb_device_descriptor desc;
+
+    cnt = libusb_get_device_list(NULL, &devs);
+
+    if(cnt < 1)
+    {
+        return false;
+    }
+
+    *devInfoListSize = cnt;
+    *devInfoList = malloc(sizeof(UsbDeviceInfo) * cnt);
+    if(!*devInfoList)
+    {
+        libusb_free_device_list(devs, 1);
+        return false;
+    }
+
+    for(i=0; i<cnt; ++i)
+    {
+        if(libusb_get_device_descriptor(devs[i], &desc) != 0)
+        {
+            free(*devInfoList);
+            libusb_free_device_list(devs, 1);
+            return false;
+        }
+
+        printf("Device: %zd\n", i);
+        printf("\tidVendor: %.4hX\n", desc.idVendor);
+        printf("\tidProduct: %.4hX\n", desc.idProduct);
+        printf("\tbcdDevice: %.4hX\n", desc.bcdDevice);
+
+        uint16_t supported_langs[16];
+        int r;
+
+        libusb_device_handle *h;
+        r = libusb_open(devs[i], &h);
+
+        if(r)
+        {
+            free(*devInfoList);
+            libusb_free_device_list(devs, 1);
+            return false;
+        }
+
+        r = libusb_get_string_descriptor(h, 0, 0, (char*)&supported_langs, sizeof(supported_langs));
+        printf("libusb_get_string_descriptor -> %d\n", r);
+
+        libusb_close(h);
+    }
+
+    //references
+    //...
+
+    libusb_free_device_list(devs, 0);
+
+    return false;
+}
+bool USBWRAP_DestroyUsbDevicesInfoList(UsbDeviceInfo* devInfoList, size_t devInfoListSize)
+{
+    return false;
+}
+bool USBWRAP_OpenDeviceByPath(wchar_t *path, USBHANDLE *handle)
+{
+    return false;
+}
+bool USBWRAP_CloseDevice(USBHANDLE handle)
+{
+    return false;
+}
+bool USBWRAP_WriteVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, size_t size)
+{
+    return false;
+}
+bool USBWRAP_ReadVendorRequest(USBHANDLE dev, uint8_t request, uint16_t value, uint16_t index, uint8_t* data, size_t* size)
+{
+    return false;
+}
+bool USBWRAP_ReadPipeDefaultInterface(USBHANDLE dev, uint8_t pipe, uint8_t* data, size_t* size)
+{
+    return false;
+}
+bool USBWRAP_WritePipeDefaultInterface(USBHANDLE dev, uint8_t pipe, uint8_t* data, size_t size)
+{
+    return false;
+}
+#endif

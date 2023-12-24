@@ -43,7 +43,7 @@ struct LptPatchSettings_t
 
 void LoadSettings(char* settings_file, struct LptPatchSettings_t *settings);
 void FreeSettings(struct LptPatchSettings_t* settings);
-noreturn void Die(wchar_t* reason, bool isSystemFail);
+void Die(wchar_t* reason, bool isSystemFail);
 char* strdup_die(const char* str);
 void LogLine(const char* file, char* line);
 void PrintInstructionDumpAt(const char* file, HANDLE process, char* prefix, PVOID address, size_t len);

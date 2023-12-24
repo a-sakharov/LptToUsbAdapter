@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <wchar.h>
 
 
 typedef enum USBLPT_MODE_t
@@ -25,7 +26,7 @@ typedef enum USBLPT_REG_t
 #pragma pack(push, 1)
 typedef struct USBLPT_version_t
 {
-    uint8_t revision; //revision count from 0, while version count from 1. so, revision 0 == version 1 and so on
+    uint8_t version; //count from 0, while public version count from 1. so, this revision 0 == version 1 and so on
     struct
     {
         uint8_t day;
@@ -54,9 +55,10 @@ typedef struct USBLPT_version_t
 
         struct
         {
+            uint8_t revision;
             uint32_t chip_id;
             uint8_t uuid[12];
-            uint8_t dummy[16];
+            uint8_t dummy[15];
         } v3;
     };
 } USBLPT_version;
@@ -79,6 +81,9 @@ extern "C" {
 
     bool UsbLpt_GetList(UsbLptDevice *devices, size_t devices_max, size_t *devices_used);
     size_t UsbLpt_BuildSimpleGuiDeviceSelection(UsbLptDevice* devices, size_t devices_count);
+
+    bool UsbLpt_Init();
+    bool UsbLpt_DeInit();
 
     USBLPT UsbLpt_Open(UsbLptDevice* dev);
     USBLPT UsbLpt_OpenAuto();
