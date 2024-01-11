@@ -138,6 +138,7 @@
     <ClCompile Include="UsbWrappers.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="USBLPT3R0_firmware.h" />
     <ClInclude Include="UsbLptLib.h" />
     <ClInclude Include="UsbWrappers.h" />
   </ItemGroup>

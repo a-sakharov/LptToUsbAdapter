@@ -26,7 +26,7 @@ typedef enum USBLPT_REG_t
 #pragma pack(push, 1)
 typedef struct USBLPT_version_t
 {
-    uint8_t version; //count from 0, while public version count from 1. so, this revision 0 == version 1 and so on
+    uint8_t implementation; //count from 0, while public version count from 1. so, this implementation 0 == version 1 and so on
     struct
     {
         uint8_t day;
@@ -89,6 +89,7 @@ extern "C" {
     USBLPT UsbLpt_OpenAuto();
     
     bool UsbLpt_Close(USBLPT dev);
+    bool UsbLpt_Reset(USBLPT dev);
     bool UsbLpt_SetMode(USBLPT dev, USBLPT_MODE mode);
     bool UsbLpt_GetVersion(USBLPT dev, USBLPT_version* ver);
     bool UsbLpt_SetPort8(USBLPT dev, USBLPT_REG reg, uint8_t byte);
