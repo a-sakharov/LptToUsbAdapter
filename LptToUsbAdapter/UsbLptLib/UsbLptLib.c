@@ -23,17 +23,17 @@ struct USBLPT_t
 
 typedef enum USBLPT_COMMAND_t
 {
-    USBLPT_GET_VERSION  = 0x07, //v1+
-    USBLPT_SET_MODE     = 0x08, //v1+
-    USBLPT_SET_REG      = 0x09, //v1+
-    USBLPT_GET_REG      = 0x0a, //v1+
+    USBLPT_GET_VERSION      = 0x07, //v1+
+    USBLPT_SET_MODE         = 0x08, //v1+
+    USBLPT_SET_REG          = 0x09, //v1+
+    USBLPT_GET_REG          = 0x0a, //v1+
 
-    USBLPT_RESET        = 0x40, //v3+
-    USBLPT_INVALIDATE_FW= 0x50, //v3+
+    USBLPT_RESET            = 0x40, //v3+
+    USBLPT_FORCE_BOOTLOADER = 0x41, //v3+
 
-    USBLPT_DFU_ERASE    = 0x80, //v3+
-    USBLPT_DFU_LDBLOCK  = 0x81, //v3+
-    USBLPT_DFU_FINALIZE = 0x82, //v3+
+    USBLPT_DFU_ERASE        = 0x80, //v3+
+    USBLPT_DFU_LDBLOCK      = 0x81, //v3+
+    USBLPT_DFU_FINALIZE     = 0x82, //v3+
 } USBLPT_COMMAND;
 
 #define COMMAN_PIPE_OUT 0x01
@@ -159,6 +159,25 @@ static bool UsbLpt_DFU_EraseFlash(USBLPT dev)
         return false;
     }
 
+    return true;
+}
+
+static bool UsbLpt_ForceBootloader(USBLPT dev)
+{
+    if (dev->no_special_endpoint)
+    {
+        if (!USBWRAP_WriteVendorRequest(dev->usb_handles, USBLPT_FORCE_BOOTLOADER, 0, 0, NULL, 0))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (!UsbLpt_BulkCmd(dev, USBLPT_FORCE_BOOTLOADER, NULL, 0, NULL, NULL))
+        {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -606,7 +625,7 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
     }
     else
     {
-        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_REG, NULL, 0, byte, &recv))
+        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_REG, &reg, 1, byte, &recv))
         {
             return false;
         }
