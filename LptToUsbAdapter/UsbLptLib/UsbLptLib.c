@@ -625,7 +625,7 @@ bool UsbLpt_GetPort8(USBLPT dev, USBLPT_REG reg, uint8_t *byte)
     }
     else
     {
-        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_REG, &reg, 1, byte, &recv))
+        if (!UsbLpt_BulkCmd(dev, USBLPT_GET_REG, (uint8_t*)&reg, 1, byte, &recv))
         {
             return false;
         }

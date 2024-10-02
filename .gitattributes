@@ -1,0 +1,6 @@
+LptToUsbAdapter/dependencies/lib/detours.lib filter=lfs diff=lfs merge=lfs -text
+LptToUsbAdapter/dependencies/lib/iniparser.static.lib filter=lfs diff=lfs merge=lfs -text
+LptToUsbAdapter/dependencies/lib/syelog.lib filter=lfs diff=lfs merge=lfs -text
+LptToUsbAdapter/dependencies/lib64/syelog.lib filter=lfs diff=lfs merge=lfs -text
+LptToUsbAdapter/dependencies/lib64/iniparser.static.lib filter=lfs diff=lfs merge=lfs -text
+LptToUsbAdapter/dependencies/lib64/detours.lib filter=lfs diff=lfs merge=lfs -text
